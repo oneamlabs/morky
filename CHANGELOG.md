@@ -4,6 +4,14 @@ Notable changes to Marky, newest first. The format follows [Keep a Changelog](ht
 
 ## [Unreleased]
 
+### Added
+
+- Marky has an app icon. `marky.exe` now carries it, so Explorer, the taskbar and shortcuts show it instead of the generic Windows icon, and the portable ZIP and `.md` file association pick it up too.
+
+### Changed
+
+- The icon is drawn on a blue tile rather than near-black, so it stays visible on the dark taskbar, and the 16–24 px sizes drop the arrow, which merged with the M at that size.
+
 ## [0.4.4] - 2026-11-10
 
 ### Added

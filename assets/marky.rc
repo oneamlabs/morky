@@ -1,0 +1,3 @@
+// Windows uses this icon group for the program: Explorer, the taskbar, shortcuts and the file
+// association registered by the installer. It is the same assets/marky.ico the installer shows.
+1 ICON "assets/marky.ico"

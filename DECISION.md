@@ -2,6 +2,38 @@
 
 Decisions about Marky that are not obvious from the code, with the reasons and the evidence behind them. Newest first. Each entry says what was decided, what else was considered, and what it costs; change one only with new evidence, and add a new entry rather than rewriting an old one.
 
+## 2026-11-18: marky.exe carries its own icon
+
+Context: `assets/marky.ico` existed, but only `installer/marky.nsi` used it (`MUI_ICON`). The program had no icon resource: GPUI's `windows-manifest` feature links only `RT_MANIFEST` (its `crates/gpui/resources/windows/gpui.rc` is one line), and the Windows backend never sends `WM_SETICON`. So Explorer, the portable ZIP, Add/Remove Programs (`DisplayIcon` is `$INSTDIR\marky.exe`) and the `.md` association (`DefaultIcon` is `marky.exe,0`) all showed the generic application icon, and the taskbar fell back to the same.
+
+### Decision
+
+- **`build.rs` embeds `assets/marky.ico`** through `assets/marky.rc` (`1 ICON "assets/marky.ico"`), using `embed-resource` — the crate GPUI already builds against for its manifest — as a build dependency. The manifest stays GPUI's; this resource adds only the icon group. The installer keeps using the same .ico, so the two cannot drift.
+- **The tile is blue (`#1f6feb`) with a white M and a pale arrow**, replacing the dark `#1e1f22` tile that disappeared on the Windows 11 dark taskbar.
+- **Two SVGs.** `app-icon.svg` is the full mark for 32 px and up; `app-icon-small.svg` is the same M without the arrow for 16, 20 and 24 px, where the two shapes merge. `scripts/make-icon.ps1` renders both into every size the shell asks for (16, 20, 24, 32, 40, 48, 64, 96, 256) as PNG entries, so the SVG stays the only artwork and no size is downscaled.
+- **One source for the sizes**, so 20, 40 and 96 are supplied rather than left to Windows' downscaling.
+
+### Options considered
+
+| Question | Chosen | Rejected, and why |
+| --- | --- | --- |
+| Where the icon lives | Embedded in the exe | **Installer-only** (before): the exe, the portable ZIP, the file association and Add/Remove Programs stayed generic. **Runtime `WM_SETICON`**: changes the window only, not Explorer or the ZIP, and GPUI exposes no call for it, so it needs `windows-sys` code for less coverage. |
+| Tile colour | Blue, white glyph | **Dark `#1e1f22` tile** (before): invisible on the dark taskbar, as the renders showed. **Transparent glyph**: needs one colour readable on light and dark backgrounds, and loses the app's shape at small sizes. |
+| 16–24 px | Separate M-only art | **One M+arrow drawing**: merges into a white blob at 16–24. **A thinner arrow**: still sub-pixel at 16. **No arrow at any size**: drops the Markdown cue the large icon carries. |
+| Rasteriser | `resvg` through an example, already in the tree via GPUI | **Committing a hand-made .ico**: nothing regenerates it from the SVG. **ImageMagick or Inkscape**: not installed, a machine dependency for one file. **sharp under Node**: Node is only for the notices. **Rendering in `build.rs`**: adds a rasteriser to every build for a file that changes rarely. |
+
+### Evidence
+
+- Contact sheets rendered from the .ico at 1x, 4x and 8x on light (`#f3f3f3`) and dark (`#202020`) backgrounds: the dark tile vanished on dark, and M+arrow merged at 16–24 px. The chosen art reads at 16 and keeps a clear gap between M and arrow at 32.
+- After `cargo build`, `ExtractIconEx` on `target/debug/marky.exe` returns a 32x32 icon (M+arrow) and a 16x16 icon (M), so the resource links correctly next to GPUI's manifest.
+- `assets/marky.ico`: 6 sizes, 7,955 bytes before; 9 sizes, 25,771 bytes after. The program grows by about the same and stays far inside the 22 MB target.
+
+### Consequences
+
+- Changing the mark means editing the SVGs and running `scripts/make-icon.ps1`; the generated .ico stays committed because `build.rs` needs it.
+- A build dependency, not a runtime one: `npm run notices` covers normal edges, so its output does not change.
+- Shortcuts and Add/Remove Programs pick the icon up from the exe with no registry change; the installer's own icon is unchanged.
+
 ## 2026-11-10: Enter continues Markdown lists
 
 Context: typing `1. Apple`, Enter, `2. Oranges`, Enter should give `3. ` without typing it. The app's previous CodeMirror editor did this (`markdown()` binds Enter to `insertNewlineContinueMarkup`); the GPUI editor inserted a bare line break.
