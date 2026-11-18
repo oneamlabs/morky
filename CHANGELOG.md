@@ -4,6 +4,8 @@ Notable changes to Marky, newest first. The format follows [Keep a Changelog](ht
 
 ## [Unreleased]
 
+## [0.4.5] - 2026-11-18
+
 ### Added
 
 - Marky has an app icon. `marky.exe` now carries it, so Explorer, the taskbar and shortcuts show it instead of the generic Windows icon, and the portable ZIP and `.md` file association pick it up too.
