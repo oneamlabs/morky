@@ -1,6 +1,6 @@
 [package]
 name = "marky"
-version = "0.4.4"
+version = "0.4.5"
 edition = "2021"
 # `str::floor_char_boundary` is the newest API Marky uses.
 rust-version = "1.91"
@@ -14,6 +14,16 @@ path = "src/main.rs"
 
 [workspace]
 members = []
+
+[build-dependencies]
+# Embeds assets/marky.ico as the program's icon (RT_GROUP_ICON). GPUI already builds against it
+# for its manifest; this adds the icon, not a second manifest. MIT.
+embed-resource = "3"
+
+[dev-dependencies]
+# Renders app-icon.svg into assets/marky.ico, so the SVG stays the only artwork. Already in the
+# tree through GPUI. MIT.
+resvg = { version = "0.46", default-features = false }
 
 [dependencies]
 # GPUI from Zed's repository, pinned to one commit of `main`: 9a8ab54, 6 Nov 2026. Unlike the

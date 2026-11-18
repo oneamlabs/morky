@@ -2030,9 +2030,10 @@ dependencies = [
 
 [[package]]
 name = "marky"
-version = "0.4.4"
+version = "0.4.5"
 dependencies = [
  "async-channel",
+ "embed-resource",
  "gpui",
  "gpui_windows",
  "merman",
@@ -2042,6 +2043,7 @@ dependencies = [
  "ratex-parser",
  "ratex-svg",
  "ratex-types",
+ "resvg",
  "rfd",
  "ropey",
  "serde",
