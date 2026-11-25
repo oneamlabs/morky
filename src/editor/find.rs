@@ -66,7 +66,7 @@ impl Prototype {
     /// Searches again only when the query, the document or its text changed.
     pub(super) fn refresh_matches(&mut self, cx: &App) {
         let Some(find) = self.find.as_mut() else { return };
-        let doc = &self.documents[self.active];
+        let doc = &self.tabs.active_doc();
         let query = find.query.read(cx).text();
         // This runs every frame; compare before copying the query.
         let current = find.searched.as_ref().is_some_and(|(id, version, searched)| *id == doc.id && *version == doc.buffer.version() && searched == query);

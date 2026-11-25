@@ -31,25 +31,24 @@ impl Prototype {
                     let opened = OpenedFile { path: path.clone(), text: snapshot.text, meta: snapshot.meta, mtime_ms, read_only: false };
                     // The startup file may already be open; its recovered text replaces what was read.
                     if !path.is_empty() {
-                        if let Some(index) = self.documents.iter().position(|doc| files::same_path(Path::new(&doc.path), Path::new(&path))) {
-                            let id = self.documents[index].id;
+                        if let Some(index) = self.tabs.iter().position(|doc| files::same_path(Path::new(&doc.path), Path::new(&path))) {
+                            let id = self.tabs.documents_mut()[index].id;
                             let mut document = Document::open(opened, id, cx);
                             document.restored = true;
-                            self.documents[index] = document;
+                            self.tabs.documents_mut()[index] = document;
                             self.schedule_parse(id, Duration::ZERO, cx);
                             self.watch_document(id, cx);
                             continue;
                         }
                     }
-                    let id = self.next_document_id;
-                    self.next_document_id += 1;
+                    let id = self.tabs.take_id();
                     let mut document = Document::open(opened, id, cx);
                     document.restored = true;
-                    self.documents.push(document);
+                    self.tabs.push(document);
                     self.schedule_parse(id, Duration::ZERO, cx);
                     self.watch_document(id, cx);
                 }
-                self.activate_tab(self.documents.len() - 1, cx);
+                self.activate_tab(self.tabs.len() - 1, cx);
             }
             rfd::MessageDialogResult::No => {
                 if let Err(err) = store::clear_snapshots(&self.recovery_dir) {
@@ -72,22 +71,17 @@ impl Prototype {
         }));
     }
 
-    /// Document ids and buffer versions of every dirty tab: everything a snapshot would contain.
-    fn recovery_versions(&self) -> Vec<(u64, u64)> {
-        self.documents.iter().filter(|doc| doc.is_dirty()).map(|doc| (doc.id, doc.buffer.version())).collect()
-    }
-
     /// What the next recovery write holds, or `None` when no buffer version and no held snapshot
     /// changed since the last one: serialising every dirty document is itself a cost at 8 MB.
     fn take_recovery_changes(&mut self) -> Option<RecoveryWrite> {
-        let versions = self.recovery_versions();
+        let versions = self.tabs.dirty_versions();
         if !self.recovery_dirty && versions == self.recovery_versions {
             return None;
         }
         self.recovery_versions = versions;
         self.recovery_dirty = false;
         let documents = self
-            .documents
+            .tabs
             .iter()
             .filter(|doc| doc.is_dirty())
             .map(|doc| ((!doc.path.is_empty()).then(|| doc.path.clone()), doc.buffer.snapshot(), doc.meta))

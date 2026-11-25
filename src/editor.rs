@@ -87,8 +87,10 @@ mod editing;
 mod find;
 mod lists;
 mod recovery;
+mod tabs;
 
 pub use chrome::*;
+use tabs::Tabs;
 
 /// CodeMirror's default indent unit, which Tab adds and Shift+Tab removes (the app binds `indentWithTab`).
 const INDENT: &str = "  ";
@@ -331,9 +333,8 @@ struct FindBar {
 
 pub struct Prototype {
     focus: FocusHandle,
-    documents: Vec<Document>,
-    active: usize,
-    next_document_id: u64,
+    /// The open documents, which one is active, and the next id.
+    tabs: Tabs,
     logged_first_frame: bool,
     /// When the last edit arrived; logged as `type_ms` once that frame has painted.
     typed_at: Option<Instant>,
@@ -437,9 +438,7 @@ impl Prototype {
         perf::mark("fonts");
         let mut this = Self {
             focus: cx.focus_handle().tab_stop(true),
-            documents: vec![document],
-            active: 0,
-            next_document_id: 1,
+            tabs: Tabs::new(document),
             logged_first_frame: false,
             typed_at: None,
             dark: settings.is_dark(window.appearance()),
@@ -499,11 +498,11 @@ impl Prototype {
     }
 
     fn doc(&self) -> &Document {
-        &self.documents[self.active]
+        self.tabs.active_doc()
     }
 
     fn doc_mut(&mut self) -> &mut Document {
-        &mut self.documents[self.active]
+        self.tabs.active_doc_mut()
     }
 
     fn report(&mut self, message: String) {
@@ -639,30 +638,29 @@ impl Prototype {
 
     /// Each tab keeps its own lists, so switching back restores its scroll positions.
     fn activate_tab(&mut self, index: usize, cx: &mut Context<Self>) {
-        if index >= self.documents.len() {
+        if !self.tabs.activate(index) {
             return;
         }
-        self.active = index;
         self.preview_link = None;
         self.doc_mut().synced_source_line = None;
         cx.notify();
     }
 
     fn dirty_count(&self) -> usize {
-        self.documents.iter().filter(|doc| doc.is_dirty()).count()
+        self.tabs.dirty_count()
     }
 
     fn close_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
-        if self.documents.len() == 1 || index >= self.documents.len() {
+        if self.tabs.len() == 1 || index >= self.tabs.len() {
             return;
         }
-        if !self.documents[index].is_dirty() {
+        if !self.tabs.documents()[index].is_dirty() {
             self.remove_tab(index, cx);
             return;
         }
         // Tabs can move while the prompt is open, so the answer finds the tab again by id.
-        let id = self.documents[index].id;
-        let message = format!("Discard unsaved changes in {}?", self.documents[index].display_name());
+        let id = self.tabs.documents()[index].id;
+        let message = format!("Discard unsaved changes in {}?", self.tabs.documents()[index].display_name());
         self.confirm_discard(&message, window, cx, move |this, _, cx| {
             if let Some(index) = this.document_index(id) {
                 this.remove_tab(index, cx);
@@ -671,12 +669,8 @@ impl Prototype {
     }
 
     fn remove_tab(&mut self, index: usize, cx: &mut Context<Self>) {
-        if self.documents.len() == 1 || index >= self.documents.len() {
+        if !self.tabs.remove(index) {
             return;
-        }
-        self.documents.remove(index);
-        if self.active > index || self.active == self.documents.len() {
-            self.active -= 1;
         }
         self.doc_mut().synced_source_line = None;
         self.release_unused_images(cx);
@@ -703,7 +697,7 @@ impl Prototype {
 
     /// The title-bar X and Quit both come here. Returns whether the window may close now.
     pub fn may_close(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        if self.documents.iter().any(|doc| doc.save_task.is_some()) {
+        if self.tabs.iter().any(|doc| doc.save_task.is_some()) {
             self.close_after_saves(window, cx);
             return false;
         }
@@ -716,7 +710,7 @@ impl Prototype {
         let message = if dirty == 1 { "Discard unsaved changes in 1 file?".to_string() } else { format!("Discard unsaved changes in {dirty} files?") };
         self.confirm_discard(&message, window, cx, |this, window, _| {
             // Discarding everything: nothing is left to recover, and held snapshots stay held.
-            for document in &mut this.documents {
+            for document in this.tabs.documents_mut() {
                 document.restored = false;
                 document.buffer.mark_saved();
             }
@@ -736,7 +730,7 @@ impl Prototype {
         self.close_task = Some(cx.spawn_in(window, async move |this, cx| {
             loop {
                 cx.background_executor().timer(Duration::from_millis(15)).await;
-                let Ok(saving) = this.update(cx, |this, _| this.documents.iter().any(|doc| doc.save_task.is_some())) else { return };
+                let Ok(saving) = this.update(cx, |this, _| this.tabs.documents().iter().any(|doc| doc.save_task.is_some())) else { return };
                 if !saving {
                     break;
                 }

@@ -17,7 +17,7 @@ impl Prototype {
         self.open_menu = None;
         cx.notify();
         let Some(index) = self.document_index(id) else { return };
-        let doc = &self.documents[index];
+        let doc = &self.tabs.documents()[index];
         if doc.path.is_empty() {
             self.save_as_document(id, cx);
             return;
@@ -35,7 +35,7 @@ impl Prototype {
     }
 
     pub(super) fn document_index(&self, id: u64) -> Option<usize> {
-        self.documents.iter().position(|doc| doc.id == id)
+        self.tabs.index_of(id)
     }
 
     /// Writes the document on a background thread: syncing a file to disk can take tens of
@@ -43,7 +43,7 @@ impl Prototype {
     /// older snapshot never lands after a newer one; a save asked for meanwhile runs next.
     fn start_save(&mut self, id: u64, target: PathBuf, cx: &mut Context<Self>) {
         let Some(index) = self.document_index(id) else { return };
-        let doc = &mut self.documents[index];
+        let doc = &mut self.tabs.documents_mut()[index];
         if doc.save_task.is_some() {
             doc.queued_save = Some(target);
             return;
@@ -62,7 +62,7 @@ impl Prototype {
     /// A save to a new path (Save As) also moves the tab, its watcher and the recent list there.
     fn finish_save(&mut self, id: u64, target: PathBuf, point: SavePoint, written: std::io::Result<u64>, cx: &mut Context<Self>) {
         let Some(index) = self.document_index(id) else { return };
-        let doc = &mut self.documents[index];
+        let doc = &mut self.tabs.documents_mut()[index];
         doc.save_task = None;
         let queued = doc.queued_save.take();
         cx.notify();
@@ -83,8 +83,11 @@ impl Prototype {
             Err(err) => self.report(format!("Could not save {}: {err}", target.display())),
         }
         let Some(next) = queued else { return };
-        let doc = &self.documents[index];
-        if files::same_path(Path::new(&doc.path), &next) && !doc.is_dirty() {
+        let already_saved = {
+            let doc = &self.tabs.documents()[index];
+            files::same_path(Path::new(&doc.path), &next) && !doc.is_dirty()
+        };
+        if already_saved {
             return;
         }
         self.start_save(id, next, cx);
@@ -105,7 +108,7 @@ impl Prototype {
 
     /// Opens `path` as a tab, or switches to the tab that already has it.
     pub(super) fn open_path(&mut self, path: &Path, cx: &mut Context<Self>) {
-        if let Some(index) = self.documents.iter().position(|doc| files::same_path(Path::new(&doc.path), path)) {
+        if let Some(index) = self.tabs.iter().position(|doc| files::same_path(Path::new(&doc.path), path)) {
             self.record_recent(path, cx);
             self.activate_tab(index, cx);
             return;
@@ -113,33 +116,31 @@ impl Prototype {
         match files::read(path) {
             Ok(opened) => {
                 self.status = None;
-                let id = self.next_document_id;
-                self.next_document_id += 1;
+                let id = self.tabs.take_id();
                 let document = Document::open(opened, id, cx);
-                self.documents.push(document);
+                self.tabs.push(document);
                 self.schedule_parse(id, Duration::ZERO, cx);
                 self.watch_document(id, cx);
                 self.record_recent(path, cx);
-                self.activate_tab(self.documents.len() - 1, cx);
+                self.activate_tab(self.tabs.len() - 1, cx);
             }
             Err(err) => self.report(format!("Could not open {}: {err}", path.display())),
         }
     }
 
     pub(super) fn new_tab(&mut self, cx: &mut Context<Self>) {
-        let id = self.next_document_id;
-        self.next_document_id += 1;
+        let id = self.tabs.take_id();
         let opened = OpenedFile::untitled(self.settings.new_file_line_ending);
-        self.documents.push(Document::open(opened, id, cx));
+        self.tabs.push(Document::open(opened, id, cx));
         self.schedule_parse(id, Duration::ZERO, cx);
-        self.activate_tab(self.documents.len() - 1, cx);
+        self.activate_tab(self.tabs.len() - 1, cx);
         self.status = None;
     }
 
     /// Saves under a new name. A New Tab document has no path until this runs.
     pub(super) fn save_as_document(&mut self, id: u64, cx: &mut Context<Self>) {
         let Some(index) = self.document_index(id) else { return };
-        let suggested = if self.documents[index].path.is_empty() { "Untitled.md".to_string() } else { self.documents[index].display_name() };
+        let suggested = if self.tabs.documents_mut()[index].path.is_empty() { "Untitled.md".to_string() } else { self.tabs.documents_mut()[index].display_name() };
         let Some(target) = rfd::FileDialog::new().add_filter("Markdown", files::MARKDOWN_EXTS).set_file_name(suggested).save_file() else {
             return;
         };
@@ -177,23 +178,23 @@ impl Prototype {
     /// mtimes; `check_external_change` does the same, after the burst settles.
     pub(super) fn watch_document(&mut self, id: u64, cx: &mut Context<Self>) {
         let Some(index) = self.document_index(id) else { return };
-        if self.documents[index].path.is_empty() {
-            self.documents[index].watcher = None;
-            self.documents[index].external_task = None;
+        if self.tabs.documents_mut()[index].path.is_empty() {
+            self.tabs.documents_mut()[index].watcher = None;
+            self.tabs.documents_mut()[index].external_task = None;
             return;
         }
-        let path = PathBuf::from(&self.documents[index].path);
+        let path = PathBuf::from(&self.tabs.documents_mut()[index].path);
         let (sender, receiver) = async_channel::unbounded::<()>();
         match watcher::watch(&path, move || {
             let _ = sender.try_send(());
         }) {
-            Ok(watcher) => self.documents[index].watcher = Some(watcher),
+            Ok(watcher) => self.tabs.documents_mut()[index].watcher = Some(watcher),
             Err(err) => {
-                self.documents[index].watcher = None;
+                self.tabs.documents_mut()[index].watcher = None;
                 diagnostics::write(&format!("could not watch {}: {err}", path.display()));
             }
         }
-        self.documents[index].external_task = Some(cx.spawn(async move |this, cx| {
+        self.tabs.documents_mut()[index].external_task = Some(cx.spawn(async move |this, cx| {
             while receiver.recv().await.is_ok() {
                 // A save can arrive as several events; read once after they stop.
                 while receiver.try_recv().is_ok() {}
@@ -208,30 +209,32 @@ impl Prototype {
 
     fn check_external_change(&mut self, id: u64, cx: &mut Context<Self>) {
         let Some(index) = self.document_index(id) else { return };
+        let doc = &self.tabs.documents()[index];
         // Our own save is still being written; its mtime is recorded when it finishes.
-        if self.documents[index].save_task.is_some() {
+        if doc.save_task.is_some() {
             return;
         }
-        let path = PathBuf::from(&self.documents[index].path);
+        let path = PathBuf::from(&doc.path);
         if path.as_os_str().is_empty() {
             return;
         }
+        let (mtime_ms, name) = (doc.mtime_ms, doc.display_name());
         let Some(now) = files::mtime_ms(&path).ok() else {
-            self.report(format!("{} was removed from disk", self.documents[index].display_name()));
+            self.report(format!("{name} was removed from disk"));
             return;
         };
-        if now == self.documents[index].mtime_ms {
+        if now == mtime_ms {
             return;
         }
         let Ok(opened) = files::read(&path) else { return };
         // Our own save, or another program writing the same bytes: only the time changed.
-        if opened.text == self.documents[index].buffer.text() {
-            self.documents[index].mtime_ms = opened.mtime_ms;
-            self.documents[index].meta = opened.meta;
+        if opened.text == doc.buffer.text() {
+            let doc = &mut self.tabs.documents_mut()[index];
+            doc.mtime_ms = opened.mtime_ms;
+            doc.meta = opened.meta;
             return;
         }
-        if self.documents[index].is_dirty() {
-            let name = self.documents[index].display_name();
+        if doc.is_dirty() {
             let reload = rfd::MessageDialog::new()
                 .set_title("Marky")
                 .set_level(rfd::MessageLevel::Warning)
@@ -240,18 +243,17 @@ impl Prototype {
                 .show();
             if reload != rfd::MessageDialogResult::Yes {
                 // Keep mine: later events for the same file are ignored until it changes again.
-                self.documents[index].mtime_ms = opened.mtime_ms;
+                self.tabs.documents_mut()[index].mtime_ms = opened.mtime_ms;
                 return;
             }
         }
-        let name = self.documents[index].display_name();
         self.reload_document(id, opened, cx);
         self.report(format!("Reloaded {name} from disk"));
     }
 
     pub(super) fn reload_document(&mut self, id: u64, opened: OpenedFile, cx: &mut Context<Self>) {
         let Some(index) = self.document_index(id) else { return };
-        self.documents[index] = Document::open(opened, id, cx);
+        self.tabs.documents_mut()[index] = Document::open(opened, id, cx);
         self.preview_link = None;
         self.schedule_parse(id, Duration::ZERO, cx);
         self.watch_document(id, cx);
@@ -264,16 +266,16 @@ impl Prototype {
             return;
         }
         let Some(index) = self.document_index(id) else { return };
-        if self.documents[index].path.is_empty() || self.documents[index].read_only {
+        if self.tabs.documents_mut()[index].path.is_empty() || self.tabs.documents_mut()[index].read_only {
             return;
         }
-        self.documents[index].auto_save_task = Some(cx.spawn(async move |this, cx| {
+        self.tabs.documents_mut()[index].auto_save_task = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(Duration::from_millis(1000)).await;
             let _ = this.update(cx, |this, cx| {
                 if !this.settings.auto_save {
                     return;
                 }
-                if this.documents.iter().any(|doc| doc.id == id && doc.is_dirty()) {
+                if this.tabs.documents().iter().any(|doc| doc.id == id && doc.is_dirty()) {
                     this.write_document(id, cx);
                 }
             });

@@ -204,7 +204,7 @@ impl Prototype {
                 self.keep_settings(cx);
             }
             Command::Settings => self.toggle_settings(window, cx),
-            Command::CloseTab => self.close_tab(self.active, window, cx),
+            Command::CloseTab => self.close_tab(self.tabs.active(), window, cx),
             Command::Quit => self.quit(&Quit, window, cx),
             Command::Undo => self.undo(&Undo, window, cx),
             Command::Redo => self.redo(&Redo, window, cx),
@@ -231,8 +231,16 @@ impl Prototype {
                 self.settings.word_wrap = !self.settings.word_wrap;
                 self.keep_settings(cx);
             }
-            Command::NextTab => self.activate_tab((self.active + 1) % self.documents.len(), cx),
-            Command::PreviousTab => self.activate_tab((self.active + self.documents.len() - 1) % self.documents.len(), cx),
+            Command::NextTab => {
+                if let Some(next) = self.tabs.next_index() {
+                    self.activate_tab(next, cx);
+                }
+            }
+            Command::PreviousTab => {
+                if let Some(previous) = self.tabs.previous_index() {
+                    self.activate_tab(previous, cx);
+                }
+            }
             Command::LargerText => self.step_font(1, cx),
             Command::SmallerText => self.step_font(-1, cx),
         }
@@ -476,9 +484,9 @@ impl Prototype {
     }
 
     pub fn tab_strip(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let active = self.active;
+        let active = self.tabs.active();
         let dark = self.dark;
-        let tabs: Vec<(String, bool)> = self.documents.iter().map(|doc| (doc.display_name(), doc.is_dirty())).collect();
+        let tabs: Vec<(String, bool)> = self.tabs.iter().map(|doc| (doc.display_name(), doc.is_dirty())).collect();
         let count = tabs.len();
         div().id("tabs").role(Role::TabList).aria_label("Open files").flex().flex_row().bg(tone(dark, 0x27272a, 0xe4e4e7)).children(
             tabs.into_iter().enumerate().map(|(index, (name, dirty))| {
@@ -1014,7 +1022,7 @@ impl Prototype {
     fn set_typographer(&mut self, on: bool, cx: &mut Context<Self>) {
         self.settings.typographer = on;
         self.keep_settings(cx);
-        let ids: Vec<u64> = self.documents.iter().map(|doc| doc.id).collect();
+        let ids: Vec<u64> = self.tabs.iter().map(|doc| doc.id).collect();
         for id in ids {
             self.schedule_parse(id, Duration::ZERO, cx);
         }

@@ -30,9 +30,9 @@ impl Prototype {
     fn update_matches_after_edit(&mut self, splice: LineSplice, len_before: usize, version_before: u64) {
         let Some(find) = self.find.as_mut() else { return };
         let Some((id, version, query)) = find.searched.as_mut() else { return };
-        let buffer = &self.documents[self.active].buffer;
+        let buffer = &self.tabs.active_doc().buffer;
         // A query with a line break could match across the edited lines; search it all again.
-        if *id != self.documents[self.active].id || *version != version_before || query.contains('\n') {
+        if *id != self.tabs.active_doc().id || *version != version_before || query.contains('\n') {
             return;
         }
         let new_lines = buffer.line_start(splice.first)..buffer.line_start(splice.first + splice.new);
@@ -58,7 +58,7 @@ impl Prototype {
     /// Parses a snapshot of the text on a background thread after `pause`. Each edit replaces the
     /// task, which cancels the previous one, so only the text after the last keystroke is parsed.
     pub(super) fn schedule_parse(&mut self, id: u64, pause: Duration, cx: &mut Context<Self>) {
-        let Some(doc) = self.documents.iter_mut().find(|doc| doc.id == id) else { return };
+        let Some(doc) = self.tabs.iter_mut().find(|doc| doc.id == id) else { return };
         let rope = doc.buffer.snapshot();
         let version = doc.buffer.version();
         let flavor = preview::Flavor { typographer: self.settings.typographer };
@@ -91,7 +91,7 @@ impl Prototype {
     fn apply_parse(&mut self, id: u64, version: u64, parsed: Parsed, parse_ms: f64, cx: &mut Context<Self>) {
         let applying = Instant::now();
         let Parsed { blocks, spans, longest, counts, base, changed, images, links, headings } = parsed;
-        let Some(doc) = self.documents.iter_mut().find(|doc| doc.id == id) else { return };
+        let Some(doc) = self.tabs.iter_mut().find(|doc| doc.id == id) else { return };
         if doc.buffer.version() != version {
             return;
         }
@@ -129,7 +129,7 @@ impl Prototype {
     /// current font size and theme: every edit of one makes a new bitmap, and GPUI keeps each until
     /// it is dropped.
     pub(super) fn release_unused_images(&self, cx: &mut App) {
-        let images = self.documents.iter().map(|doc| doc.images.as_ref());
+        let images = self.tabs.iter().map(|doc| doc.images.as_ref());
         let mut diagrams_in_use = HashSet::new();
         let mut formulas_in_use = HashSet::new();
         for found in images {

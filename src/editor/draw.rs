@@ -10,7 +10,7 @@ impl Prototype {
     /// and places the caret.
     fn render_line(&mut self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
         let dark = self.dark;
-        let doc = &self.documents[self.active];
+        let doc = &self.tabs.active_doc();
         let start = doc.buffer.line_start(ix);
         let text = doc.buffer.line(ix);
         let line = start..start + text.len();
