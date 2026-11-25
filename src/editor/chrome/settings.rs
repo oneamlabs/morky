@@ -42,7 +42,7 @@ impl Prototype {
             return false;
         }
         self.settings_open = false;
-        self.focus_editor(window, cx);
+        self.restore_editor_focus(window, cx);
         true
     }
 

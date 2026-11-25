@@ -25,7 +25,7 @@ fn text_pairs(dark: bool) -> Vec<(&'static str, u32, u32)> {
     let quiet = pick(0xa1a1aa, 0x52525b);
     vec![
         ("text on the editor", text, pick(0x18181b, 0xfafafa)),
-        ("text on the preview", text, pick(0x09090b, 0xffffff)),
+        ("text on the preview", pick(0xe4e4e7, 0x18181b), pick(0x09090b, 0xffffff)),
         ("text on the toolbar and tabs", text, pick(0x27272a, 0xe4e4e7)),
         ("text on the menu bar", text, pick(0x27272a, 0xf4f4f5)),
         ("text on a menu", text, pick(0x3f3f46, 0xffffff)),

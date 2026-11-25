@@ -21,6 +21,8 @@ pub(super) struct OutlinePane {
     /// Focus changes only affect the ring, so they are observed to bust the parent's cache.
     _focus_in: Option<Subscription>,
     _focus_out: Option<Subscription>,
+    /// A cached pane renders once before its list has bounds; one nudge brings the scrollbar in.
+    layout_nudged: bool,
     app: gpui::WeakEntity<Prototype>,
 }
 
@@ -37,6 +39,7 @@ impl OutlinePane {
             focus: cx.focus_handle().tab_stop(true),
             _focus_in: None,
             _focus_out: None,
+            layout_nudged: false,
             app,
         }
     }
@@ -57,6 +60,11 @@ impl OutlinePane {
             return;
         }
         self.current = current;
+        // Keep the heading the caret is under visible; the caret moving is the only trigger, so a
+        // reader scrolling the outline by hand is not yanked back.
+        if let Some(index) = current {
+            self.list.scroll_to_reveal_item(index);
+        }
         cx.notify();
     }
 
@@ -112,6 +120,14 @@ impl Render for OutlinePane {
             self._focus_in = Some(cx.on_focus(&self.focus, window, |_, _, cx| cx.notify()));
             self._focus_out = Some(cx.on_blur(&self.focus, window, |_, _, cx| cx.notify()));
         }
+        if !self.layout_nudged && self.list.item_count() > 0 && self.list.viewport_bounds().size.height == px(0.) {
+            self.layout_nudged = true;
+            cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(Duration::from_millis(50)).await;
+                let _ = this.update(cx, |_, cx| cx.notify());
+            })
+            .detach();
+        }
         let dark = self.dark;
         let count = self.headings.len();
         let selected = self.cursor.filter(|index| *index < count).or(self.current);
@@ -124,6 +140,7 @@ impl Render for OutlinePane {
                 .track_focus(&self.focus)
                 .role(Role::List)
                 .aria_label("Outline")
+                .relative()
                 .size_full()
                 .bg(tone(dark, 0x18181b, 0xf4f4f5))
                 .px_2()
@@ -146,8 +163,13 @@ impl Render for OutlinePane {
                     let (line, level, text) = (heading.line, heading.level, heading.text.clone());
                     let is_current = Some(index) == current;
                     let is_selected = Some(index) == selected;
+                    let tip = text.clone();
                     div()
                         .id(("heading", index))
+                        .tooltip(move |_, cx| {
+                            let text = tip.clone();
+                            cx.new(|_| OutlineTip { text, dark }).into()
+                        })
                         .role(Role::ListItem)
                         .aria_label(text.clone())
                         .aria_level(level as usize)
@@ -155,17 +177,46 @@ impl Render for OutlinePane {
                         .aria_size_of_set(count)
                         .aria_selected(is_selected)
                         .when(is_selected, |item| item.aria_active_descendant())
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_1()
                         .py_1()
                         .pl(px(4. + (level.saturating_sub(1) as f32) * 12.))
                         .when(is_current, |item| item.text_color(ring(dark)).font_weight(gpui::FontWeight::BOLD))
+                        .when(!is_current && level <= 2, |item| item.font_weight(gpui::FontWeight::BOLD))
+                        .when(!is_current && level >= 5, |item| item.text_color(quiet(dark)))
                         .when(is_selected && cursor_active, |item| item.bg(tone(dark, 0x27272a, 0xe4e4e7)))
+                        .hover(move |style| style.bg(tone(dark, 0x27272a, 0xe4e4e7)))
                         .cursor_pointer()
-                        .child(text)
+                        .child(div().w(px(8.)).when(is_current, |marker| marker.child("•")))
+                        .child(div().flex_1().min_w(px(0.)).overflow_hidden().whitespace_nowrap().text_ellipsis().child(text))
                         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.jump(line, window, cx)))
                         .into_any_element()
                 }),
             )
             .size_full(),
         )
+        .child(scrollbar::indicator(&self.list, dark))
+    }
+}
+
+/// The full heading text for a row shortened with an ellipsis.
+struct OutlineTip {
+    text: SharedString,
+    dark: bool,
+}
+
+impl Render for OutlineTip {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .px_2()
+            .py_1()
+            .text_size(px(12.))
+            .bg(tone(self.dark, 0x3f3f46, 0xffffff))
+            .text_color(tone(self.dark, 0xfafafa, 0x18181b))
+            .border_1()
+            .border_color(tone(self.dark, 0x52525b, 0xd4d4d8))
+            .child(self.text.clone())
     }
 }

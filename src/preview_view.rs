@@ -56,6 +56,9 @@ pub fn preview_item<V: PreviewHost>(block: &Block, index: usize, look: &Look, cx
         .role(block_role(block.kind))
         .aria_label(SharedString::from(block_label(block)))
         .when_some(heading_level(block.kind), |item, level| item.aria_level(level))
+        .w_full()
+        .max_w(px(760.))
+        .mx_auto()
         .px_4()
         .when(index == 0, |item| item.pt_3())
         .child(preview_block(block, look, cx))
@@ -108,7 +111,10 @@ fn preview_block<V: PreviewHost>(block: &Block, look: &Look, cx: &mut Context<V>
     let size = match block.kind {
         Kind::Heading(1) => px(font_size + 8.),
         Kind::Heading(2) => px(font_size + 4.),
-        Kind::Heading(_) => px(font_size + 2.),
+        Kind::Heading(3) => px(font_size + 2.),
+        Kind::Heading(4) => px(font_size + 1.),
+        Kind::Heading(5) => px(font_size),
+        Kind::Heading(6) => px((font_size - 1.).max(12.)),
         Kind::Code | Kind::Math | Kind::Diagram | Kind::Metadata => look.code_size(),
         Kind::Footnote(_) => px(font_size * 0.9),
         _ => px(font_size),
@@ -151,6 +157,7 @@ fn preview_block<V: PreviewHost>(block: &Block, look: &Look, cx: &mut Context<V>
             .mb_3()
             .font_weight(FontWeight::BOLD)
             .when(level <= 2, |heading| heading.pb_1().border_b_1().border_color(look.border()))
+            .when(level >= 5, |heading| heading.text_color(look.muted()))
             .child(body),
         Kind::Footnote(number) => div()
             .mb_2()
@@ -361,6 +368,10 @@ fn table_block<V: PreviewHost>(table: &Table, look: &Look, cx: &mut Context<V>) 
 }
 
 fn styled_runs<V: PreviewHost>(runs: &[Run], size: Pixels, look: &Look, cx: &mut Context<V>) -> gpui::Div {
+    // Each piece is a box, so a full stop that follows a link would otherwise be able to wrap
+    // onto the next line on its own.
+    let runs = keep_punctuation_with_previous(runs);
+    let runs = runs.as_slice();
     let count = runs.len();
     // Each piece is a box in a wrapping row, and a box wraps whole. So when a paragraph has more than
     // one piece (styles, links, formulas, images), plain text goes in word by word and flows like
@@ -386,6 +397,36 @@ fn styled_runs<V: PreviewHost>(runs: &[Run], size: Pixels, look: &Look, cx: &mut
     }
     // Formulas and images are taller than the text around them; centre each line's pieces on one another.
     div().w_full().flex().flex_row().flex_wrap().when(has_boxes, |row| row.items_center()).children(pieces)
+}
+
+/// Moves leading closing punctuation into the preceding run, so `[link](x).` keeps its full stop
+/// with the link instead of letting the flex row wrap the dot alone. Display only: the parse and
+/// the block's plain text are unchanged.
+fn keep_punctuation_with_previous(runs: &[Run]) -> Vec<Run> {
+    let mut runs = runs.to_vec();
+    let mut index = 1;
+    while index < runs.len() {
+        let leading = runs[index].text.chars().take_while(|ch| is_trailing_punctuation(*ch)).count();
+        let byte = runs[index].text.char_indices().nth(leading).map_or(runs[index].text.len(), |(byte, _)| byte);
+        let current_is_text = runs[index].style.link.is_none() && !runs[index].style.math && byte > 0;
+        let previous_accepts = !runs[index - 1].style.math
+            && !runs[index - 1].style.link.as_deref().is_some_and(|link| link.starts_with("image:"));
+        if current_is_text && previous_accepts {
+            let punctuation = runs[index].text[..byte].to_string();
+            runs[index - 1].text.push_str(&punctuation);
+            runs[index].text = runs[index].text[byte..].to_string();
+            if runs[index].text.is_empty() {
+                runs.remove(index);
+                continue;
+            }
+        }
+        index += 1;
+    }
+    runs
+}
+
+fn is_trailing_punctuation(ch: char) -> bool {
+    matches!(ch, '.' | ',' | ';' | ':' | '!' | '?' | ')' | ']' | '}' | '%' | '”' | '’')
 }
 
 /// An image inside a paragraph: its path when the run is one (`image:` destinations).
@@ -455,7 +496,8 @@ fn clickable<V: PreviewHost>(piece: gpui::Stateful<gpui::Div>, text: &str, link:
     let ring = editor::ring(dark);
     piece
         .role(Role::Link)
-        .aria_label(SharedString::from(text.trim().to_string()))
+        // A full stop moved into the link for wrapping is not part of its name.
+        .aria_label(SharedString::from(text.trim_end_matches(is_trailing_punctuation).trim().to_string()))
         .focusable()
         .when(selected, |piece| piece.border_1().border_color(ring))
         .focus_visible(move |style| style.border_1().border_color(ring))
@@ -510,6 +552,20 @@ pub fn changed_blocks(old: &[Block], new: &[Block]) -> (std::ops::Range<usize>, 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::preview::RunStyle;
+
+    #[test]
+    fn a_full_stop_after_a_link_stays_with_it() {
+        let link = |text: &str| Run { text: text.into(), style: RunStyle { link: Some("a.md".into()), ..RunStyle::default() } };
+        let plain = |text: &str| Run { text: text.into(), style: RunStyle::default() };
+        let runs = keep_punctuation_with_previous(&[link("the docs"), plain(". It continues.")]);
+        assert_eq!(runs[0].text, "the docs.");
+        assert_eq!(runs[1].text, " It continues.");
+        // A lone punctuation run disappears entirely.
+        let runs = keep_punctuation_with_previous(&[plain("word"), plain(".")]);
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].text, "word.");
+    }
 
     #[test]
     fn only_the_edited_block_changes_when_a_line_is_added_above() {

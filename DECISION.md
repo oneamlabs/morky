@@ -2,6 +2,42 @@
 
 Decisions about Marky that are not obvious from the code, with the reasons and the evidence behind them. Newest first. Each entry says what was decided, what else was considered, and what it costs; change one only with new evidence, and add a new entry rather than rewriting an old one.
 
+## 2026-11-25: A UI pass on the window chrome
+
+Context: a screenshot review found interaction-state gaps (toolbar focus, invisible scroll position, ambiguous toggles), layout gaps (no pane boundaries or splitters, no New affordance) and typography gaps (flat preview hierarchy, long lines, debug metrics in the status bar).
+
+### Decision
+
+- **Commands return focus themselves.** Toolbar and menu commands that do not move focus call `restore_editor_focus`, which picks the editor, or the preview when the editor is hidden. Tab clicks do the same. A command that closes the window sets `window_closing` first, so the same helper cannot focus a removed view; Find focuses the editor before dropping its field, whose focus would otherwise be cleared with it.
+- **Scrollbars are thin read-only indicators.** `editor/scrollbar.rs` draws a proportional thumb from `ListState` metrics (and the editor's horizontal `ScrollHandle`), inside each pane. They show position and overflow; wheel and keyboard scrolling remain the input. A draggable scrollbar would need its own entity with a notify path through the cached panes, which is left for later.
+- **Pane edges are visible and draggable.** A six-pixel handle with a one-pixel line sits between outline/editor and editor/preview; the outline is clamped to 140–400 px and the split to 15–85%. The splitter maps the pointer through the last laid-out editor/preview viewports, so it works with the outline and side panels. Widths are per-session, not settings.
+- **Toggle state uses fill, weight and hover**, not colour alone; the focus ring stays a separate signal.
+- **The outline marks and follows the caret.** The current heading gets a dot and the accent colour, `set_current` reveals it, long headings ellipsize with a tooltip, and levels 1–2 are bold while 5–6 are muted.
+- **Preview typography:** h3–h6 get distinct sizes, h5–h6 are muted, blocks are capped at 760 px and centred, and the body colour is softened to `#e4e4e7` in the dark theme (the contrast test tracks it).
+- **Chrome affordances:** a + button on the tab strip, horizontal scrolling for many tabs, File > About Marky, hover feedback on toolbar/tabs/outline rows, and tooltips on CRLF/UTF-8 labels. Startup and parse timings leave the status bar and stay in `marky.log`/the perf log.
+
+### Options considered
+
+| Question | Chosen | Rejected, and why |
+| --- | --- | --- |
+| Scrollbars | Read-only overlay thumbs | **Draggable scrollbars now**: each cached pane would need a scrollbar entity whose own notify must bust the pane cache; the position cue is the user-facing gap. **GPUI defaults**: lists reserve space but draw nothing. |
+| Splitters | Drag handles in the window | **Fixed panes**: the screenshot review's complaint. **Persisted in settings**: this is session layout, not a preference, and would need a schema field and control for no clear gain. |
+| Focus after toolbar | Explicit restore helper | **Let the button keep focus**: typing then goes nowhere. **Restore the previous focus blindly**: after hiding the editor the previous focus is the hidden editor. |
+| Outline current | Dot + accent + reveal | **Colour only**: uncertain at a glance and fails the colour-only principle. **No reveal**: the highlight can sit off-screen. |
+| Preview width | 760 px centred column | **Full pane width**: prose runs very long on wide windows. **A user setting**: one readable default is enough. |
+
+### Evidence
+
+- Clippy clean, 141 tests pass (140 with all features), and `scripts/e2e.ps1` passes 45 checks with 4 documented skips, run twice.
+- A fresh screenshot of the release build verifies the markers, dividers, scrollbars, preview hierarchy and status bar; the titlebar icon is present. The stray blue block from the first screenshot could not be reproduced (it is most likely a selection). The screenshot also caught two issues fixed in the same pass: the preview's first scrollbar frame was missing until a nudge, and a full stop after a link wrapped onto the next line.
+
+### Consequences
+
+- Split widths reset on launch and on window recreation.
+- Scrollbars are indicators, not drag targets; adding drag means giving each pane a scrollbar view that notifies its host cache.
+- The menu focus-handling helper now has one home (`restore_editor_focus`); new chrome commands should use it rather than `focus_editor`.
+- The About prompt takes the focus (it is marked as a focus-moving command), so the menu handler does not steal it back.
+
 ## 2026-11-25: Node is dropped; notices come from xtask
 
 Context: `package.json`, `package-lock.json`, `tsconfig.scripts.json` and one 181-line TypeScript file existed only to generate `THIRD_PARTY_NOTICES.txt`. That made Node a development requirement and `npm audit` a CI step that could fail on the generator's own dependencies, unrelated to Marky.

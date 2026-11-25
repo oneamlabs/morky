@@ -91,13 +91,14 @@ pub enum Command {
     PreviousTab,
     LargerText,
     SmallerText,
+    About,
 }
 
 impl Command {
     /// Commands that put the focus somewhere of their own; the others hand it back to the editor
-    /// when they come from a menu.
+    /// when they come from a menu or the toolbar.
     fn moves_focus(self) -> bool {
-        matches!(self, Self::Find | Self::Replace | Self::Settings | Self::Open | Self::OpenRecent)
+        matches!(self, Self::Find | Self::Replace | Self::Settings | Self::Open | Self::OpenRecent | Self::About | Self::Quit)
     }
 }
 
@@ -179,10 +180,16 @@ impl Prototype {
                     self.settings.show_preview = false;
                 }
                 self.keep_settings(cx);
+                if self.settings.preview_visible() {
+                    self.refresh_revealed_views(cx);
+                }
             }
             Command::ToggleOutline => {
                 self.settings.show_outline = !self.settings.show_outline;
                 self.keep_settings(cx);
+                if self.settings.show_outline {
+                    self.refresh_revealed_views(cx);
+                }
             }
             Command::ToggleWordWrap => {
                 self.settings.word_wrap = !self.settings.word_wrap;
@@ -200,6 +207,7 @@ impl Prototype {
             }
             Command::LargerText => self.step_font(1, cx),
             Command::SmallerText => self.step_font(-1, cx),
+            Command::About => show_about(window, cx),
         }
         cx.notify();
     }
@@ -231,6 +239,37 @@ impl Prototype {
         cx.notify();
     }
 
+    /// A cached pane revealed this frame can miss the first accessibility tree rebuild; one extra
+    /// notify on the next frame makes the reveal reliable for screen readers and UI Automation.
+    fn refresh_revealed_views(&mut self, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(Duration::from_millis(50)).await;
+            let _ = this.update(cx, |this, cx| {
+                this.notify_views(cx);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Gives the keyboard back to the editor after a command that did not move it there itself.
+    /// With the editor hidden, the preview (the pane that must be showing) takes it instead.
+    fn restore_editor_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.window_closing {
+            return;
+        }
+        if self.settings.show_editor {
+            self.focus_editor(window, cx);
+            return;
+        }
+        if let Some(views) = self.active_views() {
+            let preview = views.preview.clone();
+            preview.update(cx, |pane, cx| pane.focus(window, cx));
+            return;
+        }
+        self.focus_editor(window, cx);
+    }
+
     // ----- Toolbar, tabs -----
 
     /// View toggles only; Open and Save live in the File menu and on Ctrl+O / Ctrl+S.
@@ -260,6 +299,8 @@ impl Prototype {
     fn tool_button(&self, id: &'static str, label: &'static str, icon: &'static str, command: Command, on: bool, cx: &mut Context<Self>) -> Stateful<gpui::Div> {
         let dark = self.dark;
         let color = tone(dark, 0xfafafa, 0x18181b);
+        let background = if on { tone(dark, 0x52525b, 0xd4d4d8) } else { tone(dark, 0x27272a, 0xe4e4e7) };
+        let hover = if on { tone(dark, 0x63636e, 0xc4c4c8) } else { tone(dark, 0x3f3f46, 0xd4d4d8) };
         focus_ring(
             div()
                 .id(id)
@@ -274,11 +315,18 @@ impl Prototype {
                 .gap_1()
                 .px_2()
                 .py_1()
-                .bg(if on { tone(dark, 0x3f3f46, 0xffffff) } else { tone(dark, 0x27272a, 0xe4e4e7) })
+                .bg(background)
+                .when(on, |button| button.font_weight(gpui::FontWeight::BOLD))
+                .hover(move |style| style.bg(hover))
                 .text_color(color)
                 .child(svg().path(icon).w(px(16.)).h(px(16.)).text_color(color))
                 .child(label)
-                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.run(command, window, cx))),
+                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                    this.run(command, window, cx);
+                    if !command.moves_focus() {
+                        this.restore_editor_focus(window, cx);
+                    }
+                })),
             dark,
         )
     }
@@ -288,11 +336,12 @@ impl Prototype {
         let dark = self.dark;
         let tabs: Vec<(String, bool)> = self.tabs.iter().map(|doc| (doc.display_name(), doc.is_dirty())).collect();
         let count = tabs.len();
-        div().id("tabs").role(Role::TabList).aria_label("Open files").flex().flex_row().bg(tone(dark, 0x27272a, 0xe4e4e7)).children(
+        let row = div().id("tab-row").flex().flex_row().flex_1().min_w(px(0.)).overflow_x_scroll().children(
             tabs.into_iter().enumerate().map(|(index, (name, dirty))| {
                 let label = if dirty { format!("{name}, unsaved changes") } else { name.clone() };
                 let shown = if dirty { format!("{name} •") } else { name.clone() };
                 let current = index == active;
+                let background = if current { tone(dark, 0x3f3f46, 0xffffff) } else { tone(dark, 0x27272a, 0xe4e4e7) };
                 div()
                     .id(("tab", index))
                     .role(Role::Tab)
@@ -302,11 +351,16 @@ impl Prototype {
                     .aria_size_of_set(count)
                     .flex()
                     .flex_row()
+                    .flex_none()
                     .items_center()
                     .px_2()
                     .py_1()
-                    .bg(if current { tone(dark, 0x3f3f46, 0xffffff) } else { tone(dark, 0x27272a, 0xe4e4e7) })
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.activate_tab(index, cx)))
+                    .bg(background)
+                    .hover(move |style| style.bg(tone(dark, 0x3f3f46, 0xd4d4d8)))
+                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                        this.activate_tab(index, cx);
+                        this.restore_editor_focus(window, cx);
+                    }))
                     .child(shown)
                     .when(count > 1, |tab| {
                         tab.child(
@@ -323,7 +377,35 @@ impl Prototype {
                         )
                     })
             }),
+        );
+        let new_tab = focus_ring(
+            div()
+                .id("new-tab")
+                .role(Role::Button)
+                .aria_label("New tab")
+                .focusable()
+                .tab_stop(true)
+                .flex_none()
+                .px_3()
+                .py_1()
+                .hover(|style| style.bg(tone(dark, 0x3f3f46, 0xd4d4d8)))
+                .child("+"),
+            dark,
         )
+        .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+            this.new_tab(cx);
+            this.focus_editor(window, cx);
+        }));
+        div()
+            .id("tabs")
+            .role(Role::TabList)
+            .aria_label("Open files")
+            .flex()
+            .flex_row()
+            .items_center()
+            .bg(tone(dark, 0x27272a, 0xe4e4e7))
+            .child(row)
+            .child(new_tab)
     }
 
     pub fn find_bar(&mut self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
@@ -414,18 +496,27 @@ impl Prototype {
             files::LineEnding::Crlf => "CRLF",
             files::LineEnding::Lf => "LF",
         };
-        let mut items = vec![
-            format!("Ln {}, Col {column}", line + 1),
-            format!("{} words, {} chars", grouped(doc.counts.words), grouped(doc.counts.chars)),
-            ending.to_string(),
-            encoding.to_string(),
+        let items = vec![
+            (format!("Ln {}, Col {column}", line + 1), None),
+            (format!("{} words, {} chars", grouped(doc.counts.words), grouped(doc.counts.chars)), None),
+            (
+                ending.to_string(),
+                Some(match doc.meta.line_ending {
+                    files::LineEnding::Crlf => "Windows (CRLF) line endings; kept when saving",
+                    files::LineEnding::Lf => "Unix (LF) line endings; kept when saving",
+                }),
+            ),
+            (
+                encoding.to_string(),
+                Some(if doc.read_only {
+                    "The file is not valid UTF-8; saving is disabled"
+                } else if doc.meta.bom {
+                    "UTF-8 with a byte-order mark"
+                } else {
+                    "UTF-8 without a byte-order mark"
+                }),
+            ),
         ];
-        if let Some((latency, parse)) = doc.last_preview {
-            items.push(format!("preview {latency:.0} ms (parse {parse:.1})"));
-        }
-        if let Some(startup) = perf::startup_ms() {
-            items.push(format!("start {startup:.0} ms"));
-        }
         let path = SharedString::from(doc.path.clone());
         let status = self.status.clone();
         div()
@@ -449,11 +540,58 @@ impl Prototype {
             .children(status.map(|status| {
                 div().id("status-message").role(Role::Alert).aria_label(SharedString::from(status.clone())).flex_none().text_color(tone(dark, 0xfca5a5, 0xb91c1c)).child(status)
             }))
-            .children(items.into_iter().enumerate().map(|(index, item)| {
-                div().id(("status", index)).role(Role::Label).aria_value(SharedString::from(item.clone())).flex_none().child(item)
-            }))
+            .children(items.into_iter().enumerate().map(|(index, (item, hint))| status_item(index, item, hint, dark)))
     }
 
+}
+
+/// One quiet status-bar value, with a tooltip for the labels that are jargon.
+fn status_item(index: usize, text: String, hint: Option<&'static str>, dark: bool) -> AnyElement {
+    let item = div().id(("status", index)).role(Role::Label).aria_value(SharedString::from(text.clone())).flex_none().child(text);
+    match hint {
+        Some(hint) => item
+            .tooltip(move |_, cx| {
+                let text = SharedString::from(hint);
+                cx.new(|_| Hint { text, dark }).into()
+            })
+            .into_any_element(),
+        None => item.into_any_element(),
+    }
+}
+
+struct Hint {
+    text: SharedString,
+    dark: bool,
+}
+
+impl Render for Hint {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .px_2()
+            .py_1()
+            .text_size(px(12.))
+            .bg(tone(self.dark, 0x3f3f46, 0xffffff))
+            .text_color(tone(self.dark, 0xfafafa, 0x18181b))
+            .border_1()
+            .border_color(tone(self.dark, 0x52525b, 0xd4d4d8))
+            .child(self.text.clone())
+    }
+}
+
+/// Version, licence and log location. A prompt rather than a hidden dialog, so it needs no new
+/// window and works with the same focus path as the discard prompt.
+fn show_about(window: &mut Window, cx: &mut Context<Prototype>) {
+    let log = crate::settings::own_local_dir().join("marky.log");
+    let message = format!(
+        "Marky {}\n\nA fast Markdown editor for Windows.\nMIT licence. Third-party notices ship with Marky.\n\nLog: {}",
+        env!("CARGO_PKG_VERSION"),
+        log.display()
+    );
+    let answer = window.prompt(PromptLevel::Info, &message, None, &["OK"], cx);
+    cx.spawn_in(window, async move |_, _| {
+        let _ = answer.await;
+    })
+    .detach();
 }
 
 /// A focusable control with the ring drawn in its border, which is transparent until the control

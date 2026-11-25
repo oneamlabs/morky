@@ -7,7 +7,7 @@
 use super::*;
 
 /// Room for the longest menu: one focus handle per item, so the arrows can move between them.
-pub const MENU_ITEMS: usize = 9;
+pub const MENU_ITEMS: usize = 10;
 
 pub const MENUS: [(OpenMenu, &str); 3] = [(OpenMenu::File, "File"), (OpenMenu::Edit, "Edit"), (OpenMenu::View, "View")];
 
@@ -25,7 +25,7 @@ pub const fn entry(label: &'static str, shortcut: &'static str, access: char, co
 
 /// The app's menus with their shortcut hints. Larger and Smaller text are Marky's own.
 pub fn entries(menu: OpenMenu) -> &'static [Entry] {
-    const FILE: [Entry; 9] = [
+    const FILE: [Entry; 10] = [
         entry("New Tab", "Ctrl+N", 'n', Command::NewTab),
         entry("Open…", "Ctrl+O", 'o', Command::Open),
         entry("Open Recent…", "Ctrl+R", 'r', Command::OpenRecent),
@@ -34,6 +34,7 @@ pub fn entries(menu: OpenMenu) -> &'static [Entry] {
         entry("Auto Save", "", 'u', Command::ToggleAutoSave),
         entry("Settings…", "Ctrl+,", 't', Command::Settings),
         entry("Close Tab", "Ctrl+W", 'c', Command::CloseTab),
+        entry("About Marky", "", 'b', Command::About),
         entry("Quit", "", 'q', Command::Quit),
     ];
     const EDIT: [Entry; 8] = [
@@ -134,7 +135,7 @@ impl Prototype {
     pub fn close_menus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(menu) = self.open_menu.take() else { return };
         if self.menu_root.is_focused(window) || self.menu_focus[..entries(menu).len()].iter().any(|handle| handle.is_focused(window)) {
-            self.focus_editor(window, cx);
+            self.restore_editor_focus(window, cx);
         }
         cx.notify();
     }
@@ -162,7 +163,7 @@ impl Prototype {
         let command = entry.command;
         self.run(command, window, cx);
         if !command.moves_focus() {
-            self.focus_editor(window, cx);
+            self.restore_editor_focus(window, cx);
         }
     }
 

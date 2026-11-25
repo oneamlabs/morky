@@ -61,10 +61,14 @@ formula layout capped per frame; one copy per source line. Measure each of the r
 
 - [ ] Rename `Prototype` (it is the app's window now). `editor.rs` is already split by subsystem.
 - [ ] One set of UTF-16 offset helpers for the editor and `text_field.rs`.
-- [ ] Shorten the longest functions: `render_line`, the accessibility closure in `editor_column`, `restore_or_discard`, `preview::blocks_with`, `settings_panel`.
+- [ ] Shorten the longest functions: `render_line`, the accessibility closure in `source_pane`, `restore_or_discard`, `preview::blocks_with`, `settings_panel`.
 
 ## Editor and preview
 
+- [ ] Make the pane scrollbars draggable (they are position indicators today); this needs a scrollbar view per pane that notifies its cached host.
+- [ ] Persist the outline width and editor/preview split if they prove worth remembering across launches.
+- [ ] Reveal the active tab when the tab strip overflows after Ctrl+Tab.
+- [ ] Reproduce the stray blue block seen at a Markdown rule in one screenshot; it may have been a selection.
 - [ ] IME reconversion: **blocked on GPUI**, whose Windows backend handles no `WM_IME_REQUEST` (still so at `9a8ab54`). The app already answers GPUI's point-to-character request; enabling reconversion needs an upstream GPUI change.
 - [x] Move the preview block comparison to the parse thread (done; the 8 MB re-run above is still open).
 - [ ] Re-check preview memory on large documents. Text, parsed blocks, the line index and images still grow with the document (about 13 MB per MB before syntax highlighting), and the preview builds all blocks even though both panes are virtualised.
