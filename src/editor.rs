@@ -88,9 +88,11 @@ mod draw;
 mod editing;
 mod find;
 mod input;
+mod links;
 mod lists;
 mod recovery;
 mod tabs;
+mod window;
 
 pub use chrome::*;
 pub use document::Document;
@@ -363,74 +365,6 @@ impl Prototype {
         }
     }
 
-    /// Every link the preview draws, in document order, with the block it is in. The preview is one
-    /// tab stop; the left and right arrows move through this list and Enter follows the chosen link.
-    fn preview_links(&self) -> &[(Arc<str>, usize)] {
-        &self.doc().links
-    }
-
-    /// The preview's text as one read-only AccessKit text pattern, capped like the editor's so a
-    /// large document does not build a tree the size of its text on every frame.
-    fn preview_described(&self, window: &Window) -> Option<Vec<a11y::Line>> {
-        if !window.is_a11y_active() {
-            return None;
-        }
-        let lines: Vec<a11y::Line> = self
-            .doc()
-            .blocks
-            .iter()
-            .enumerate()
-            .take(a11y::LINES_DESCRIBED)
-            .map(|(index, block)| a11y::Line { index, text: preview_view::block_label(block), bounds: None, positions: None, widths: None })
-            .filter(|line| !line.text.is_empty())
-            .collect();
-        let mut lines = a11y::within_budget(lines, &[]);
-        a11y::end_lines(&mut lines);
-        Some(lines)
-    }
-
-    /// A click on a link in the preview, with the app's rules (`followLink`): web and mail links open
-    /// in the default program; a footnote reference scrolls the preview to its footnote; a relative
-    /// link opens a .md, .markdown or .txt file next to this one as a tab. The preview never navigates.
-    pub fn follow_link(&mut self, link: &str, _window: &mut Window, cx: &mut Context<Self>) {
-        if link.starts_with("http://") || link.starts_with("https://") || link.starts_with("mailto:") {
-            cx.open_url(link);
-            return;
-        }
-        if let Some(number) = link.strip_prefix("#fn:").and_then(|number| number.parse::<u32>().ok()) {
-            let doc = self.doc();
-            if let Some(index) = doc.blocks.iter().position(|block| block.kind == Kind::Footnote(number)) {
-                doc.block_list.scroll_to(ListOffset { item_ix: index, offset_in_item: px(0.) });
-                cx.notify();
-            }
-            return;
-        }
-        // A footnote's ↩ scrolls back to the block that refers to it.
-        if let Some(number) = link.strip_prefix("#fnref:") {
-            let target = format!("#fn:{number}");
-            let doc = self.doc();
-            let refers = |runs: &[preview::Run]| runs.iter().any(|run| run.style.link.as_deref() == Some(target.as_str()));
-            let found = doc.blocks.iter().position(|block| refers(&block.runs) || block.table.as_ref().is_some_and(|table| table.rows.iter().flatten().any(|cell| refers(cell))));
-            if let Some(index) = found {
-                doc.block_list.scroll_to(ListOffset { item_ix: index, offset_in_item: px(0.) });
-                cx.notify();
-            }
-            return;
-        }
-        // The app gives headings no ids, so other #anchors go nowhere, as there.
-        if link.starts_with('#') {
-            return;
-        }
-        let target = link.split('#').next().unwrap_or_default().replace("%20", " ");
-        match allowlist::link_target(Path::new(&self.doc().path), &target) {
-            Ok(path) => self.open_path(&path, cx),
-            Err(err) => {
-                self.report(format!("Not opened: {link} ({err})"));
-                cx.notify();
-            }
-        }
-    }
-
     /// Each tab keeps its own lists, so switching back restores its scroll positions.
     fn activate_tab(&mut self, index: usize, cx: &mut Context<Self>) {
         if !self.tabs.activate(index) {
@@ -465,137 +399,6 @@ impl Prototype {
         self.keep_settings(cx);
     }
 
-    /// Writes the restored window bounds a moment after a resize or move stops, so dragging does
-    /// not write the file on every frame.
-    fn schedule_geometry_save(&mut self, window: &Window, cx: &mut Context<Self>) {
-        let bounds = match window.window_bounds() {
-            WindowBounds::Windowed(bounds) => (bounds, false),
-            WindowBounds::Maximized(bounds) | WindowBounds::Fullscreen(bounds) => (bounds, true),
-        };
-        let geometry = store::WindowGeometry {
-            width: f64::from(f32::from(bounds.0.size.width)),
-            height: f64::from(f32::from(bounds.0.size.height)),
-            x: f64::from(f32::from(bounds.0.origin.x)),
-            y: f64::from(f32::from(bounds.0.origin.y)),
-            maximized: bounds.1,
-        };
-        let config_dir = self.config_dir.clone();
-        self.geometry_task = Some(cx.spawn(async move |_this, cx| {
-            cx.background_executor().timer(Duration::from_millis(500)).await;
-            if let Err(err) = store::save_window_geometry(&config_dir, &geometry) {
-                diagnostics::write(&format!("could not save the window geometry: {err}"));
-            }
-        }));
-    }
-
-    fn keep_settings(&mut self, cx: &mut Context<Self>) {
-        if let Err(message) = settings::save(&self.config_dir, &self.settings) {
-            self.report(message);
-        }
-        self.open_menu = None;
-        cx.notify();
-    }
-
-    // ----- Scrolling and timing -----
-
-    /// The caret stays visible, and the preview shows the block for the top visible source line.
-    fn sync_scroll(&mut self) {
-        let show_editor = self.settings.show_editor;
-        let show_preview = self.settings.preview_visible();
-        let doc = self.doc_mut();
-        let cursor_line = doc.buffer.line_of(doc.cursor());
-        if doc.followed_cursor_line != Some(cursor_line) {
-            doc.followed_cursor_line = Some(cursor_line);
-            if show_editor {
-                doc.lines.scroll_to_reveal_item(cursor_line);
-            }
-        }
-        if !show_editor || !show_preview || doc.blocks.is_empty() {
-            return;
-        }
-        let top = doc.lines.logical_scroll_top().item_ix;
-        if doc.synced_source_line == Some(top) {
-            return;
-        }
-        doc.synced_source_line = Some(top);
-        let block = preview::block_at_line(&doc.blocks, top + 1);
-        doc.block_list.scroll_to(ListOffset { item_ix: block, offset_in_item: px(0.) });
-    }
-
-    /// With word wrap off, keeps the caret in view sideways after it moves. The caret's bounds are
-    /// only known once it is painted, so the scroll happens on the frame after the move; scrolling by
-    /// hand is left alone until the caret moves again. Returns whether the offset changed.
-    fn follow_caret_sideways(&mut self) -> bool {
-        let doc = self.doc();
-        let cursor = (doc.id, doc.cursor());
-        if self.last_cursor != Some(cursor) {
-            self.last_cursor = Some(cursor);
-            self.follow_x = true;
-        }
-        if !self.follow_x {
-            return false;
-        }
-        let Some((_, caret)) = self.caret_painted.filter(|(painted, _)| *painted == cursor.1) else {
-            return false;
-        };
-        self.follow_x = false;
-        let view = self.h_scroll.bounds();
-        let margin = px(32.);
-        let mut offset = self.h_scroll.offset();
-        if caret.right() > view.right() - margin {
-            offset.x -= caret.right() - (view.right() - margin);
-        } else if caret.left() < view.left() + margin {
-            offset.x = (offset.x + (view.left() + margin - caret.left())).min(px(0.));
-        } else {
-            return false;
-        }
-        self.h_scroll.set_offset(offset);
-        true
-    }
-
-    /// Startup and typing are timed to the end of the frame's paint, like the app's
-    /// measurements (a rAF callback that reports after paint).
-    fn frame_timer(&mut self) -> impl IntoElement {
-        let first_frame = !self.logged_first_frame;
-        self.logged_first_frame = true;
-        let typed_at = self.typed_at.take();
-        let started = self.frame_started.take();
-        canvas(
-            // Last child: its prepaint runs once layout and every other prepaint are done.
-            move |_, _, _| {
-                if first_frame {
-                    perf::mark("layout");
-                }
-            },
-            move |_, _, _, _| {
-                if first_frame {
-                    perf::log_startup();
-                }
-                if let Some(typed_at) = typed_at {
-                    perf::log(&format!("type_ms={:.1}", typed_at.elapsed().as_secs_f64() * 1000.0));
-                }
-                // Render, layout, prepaint and paint of one frame, all on the main thread. The first
-                // frame is start-up, timed as such.
-                if let Some(started) = started.filter(|_| !first_frame) {
-                    let ms = started.elapsed().as_secs_f64() * 1000.0;
-                    if ms > 50.0 {
-                        perf::log(&format!("stall_ms={ms:.0} frame"));
-                    }
-                }
-            },
-        )
-        .absolute()
-        .size_0()
-    }
-
-    fn update_title(&mut self, window: &mut Window) {
-        let doc = self.doc();
-        let title = format!("{}{} - Marky", doc.display_name(), if doc.is_dirty() { " •" } else { "" });
-        if title != self.window_title {
-            window.set_window_title(&title);
-            self.window_title = title;
-        }
-    }
 }
 
 

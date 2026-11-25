@@ -5,6 +5,81 @@
 use super::*;
 
 impl Prototype {
+    /// The caret stays visible, and the preview shows the block for the top visible source line.
+    pub(super) fn sync_scroll(&mut self) {
+        let show_editor = self.settings.show_editor;
+        let show_preview = self.settings.preview_visible();
+        let doc = self.doc_mut();
+        let cursor_line = doc.buffer.line_of(doc.cursor());
+        if doc.followed_cursor_line != Some(cursor_line) {
+            doc.followed_cursor_line = Some(cursor_line);
+            if show_editor {
+                doc.lines.scroll_to_reveal_item(cursor_line);
+            }
+        }
+        if !show_editor || !show_preview || doc.blocks.is_empty() {
+            return;
+        }
+        let top = doc.lines.logical_scroll_top().item_ix;
+        if doc.synced_source_line == Some(top) {
+            return;
+        }
+        doc.synced_source_line = Some(top);
+        let block = preview::block_at_line(&doc.blocks, top + 1);
+        doc.block_list.scroll_to(ListOffset { item_ix: block, offset_in_item: px(0.) });
+    }
+
+    /// With word wrap off, keeps the caret in view sideways after it moves. The caret's bounds are
+    /// only known once it is painted, so the scroll happens on the frame after the move; scrolling by
+    /// hand is left alone until the caret moves again. Returns whether the offset changed.
+    pub(super) fn follow_caret_sideways(&mut self) -> bool {
+        let doc = self.doc();
+        let cursor = (doc.id, doc.cursor());
+        if self.last_cursor != Some(cursor) {
+            self.last_cursor = Some(cursor);
+            self.follow_x = true;
+        }
+        if !self.follow_x {
+            return false;
+        }
+        let Some((_, caret)) = self.caret_painted.filter(|(painted, _)| *painted == cursor.1) else {
+            return false;
+        };
+        self.follow_x = false;
+        let view = self.h_scroll.bounds();
+        let margin = px(32.);
+        let mut offset = self.h_scroll.offset();
+        if caret.right() > view.right() - margin {
+            offset.x -= caret.right() - (view.right() - margin);
+        } else if caret.left() < view.left() + margin {
+            offset.x = (offset.x + (view.left() + margin - caret.left())).min(px(0.));
+        } else {
+            return false;
+        }
+        self.h_scroll.set_offset(offset);
+        true
+    }
+
+    /// The preview's text as one read-only AccessKit text pattern, capped like the editor's so a
+    /// large document does not build a tree the size of its text on every frame.
+    pub(super) fn preview_described(&self, window: &Window) -> Option<Vec<a11y::Line>> {
+        if !window.is_a11y_active() {
+            return None;
+        }
+        let lines: Vec<a11y::Line> = self
+            .doc()
+            .blocks
+            .iter()
+            .enumerate()
+            .take(a11y::LINES_DESCRIBED)
+            .map(|(index, block)| a11y::Line { index, text: preview_view::block_label(block), bounds: None, positions: None, widths: None })
+            .filter(|line| !line.text.is_empty())
+            .collect();
+        let mut lines = a11y::within_budget(lines, &[]);
+        a11y::end_lines(&mut lines);
+        Some(lines)
+    }
+
     /// One source line, laid out only when the list needs it. Syntax colours, find matches and the
     /// selection are layered highlights on the line's own `StyledText`, whose layout also maps clicks
     /// and places the caret.

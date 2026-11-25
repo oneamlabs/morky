@@ -216,4 +216,13 @@ impl Prototype {
             self.schedule_parse(id, Duration::ZERO, cx);
         }
     }
+
+    /// Saves the view settings and closes any menu. Every control in this panel ends here.
+    pub(crate) fn keep_settings(&mut self, cx: &mut Context<Self>) {
+        if let Err(message) = crate::settings::save(&self.config_dir, &self.settings) {
+            self.report(message);
+        }
+        self.open_menu = None;
+        cx.notify();
+    }
 }
