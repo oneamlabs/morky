@@ -12,7 +12,7 @@ Notable changes to Marky, newest first. The format follows [Keep a Changelog](ht
 
 ### Changed
 
-- Typing redraws only the editor: the preview and outline are separate cached views, and each tab keeps its own preview and outline scroll position.
+- Typing redraws only the editor: the source editor is its own view, and the preview and outline are separate cached views. Each tab keeps its own preview and outline scroll position.
 - Settings changes and window-position writes happen in the background, so a slow disk no longer pauses the window; closing waits for the last settings write. If the settings file cannot be read, Marky says so in the status bar and leaves the file alone.
 - Opening one file by different spellings (`C:\a\b.md` and `c:\a\.\b.md`) reuses the same tab and watcher.
 

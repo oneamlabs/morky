@@ -25,7 +25,7 @@ formula layout capped per frame; one copy per source line. Measure each of the r
 
 ### Main thread
 
-- [ ] Extract the source editor into its own view (and, if it pays, the status bar). The preview and outline are now cached child views, but the editor's list, chrome and status bar still rebuild in the window's render.
+- [ ] Move line rendering, caret painting and selection painting into `SourcePane`; today the source view is a shell and delegates each visible line to the window, which still owns the buffer, find state and editing rules. The status bar still rebuilds in the window's render.
 - [ ] Draw a paragraph's text runs as one `StyledText`/`InteractiveText` instead of one `div` per word (`preview_view::styled_runs`). Keep boxes only for paragraphs with inline formulas or images, and keep links as accessibility nodes.
 - [ ] Cache the editor's and preview's accessibility text by buffer version, scroll top and selection; it is rebuilt every frame while any UI Automation client listens, with two `position_for_index` calls per character.
 - [ ] Find: a changed query still copies the whole document (`buffer.text()`) to search it; search the rope's chunks or a background snapshot instead.

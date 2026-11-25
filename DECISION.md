@@ -2,6 +2,40 @@
 
 Decisions about Marky that are not obvious from the code, with the reasons and the evidence behind them. Newest first. Each entry says what was decided, what else was considered, and what it costs; change one only with new evidence, and add a new entry rather than rewriting an old one.
 
+## 2026-11-25: The source editor is its own view
+
+Context: the last piece of the view split. The editor carries Windows text input, IME, the caret and accessibility, so it is the riskiest pane to move; the window also owns the buffer, undo, find matches and every editing rule.
+
+### Decision
+
+- **`SourcePane` owns the editor shell, focus, key context, input handler and a11y node.** It shares the window's `focus` handle, implements `EntityInputHandler`, registers the `InputLayer`, and renders the source div with `key_context("Editor")` and `MultilineTextInput`.
+- **Editing state stays on the window.** The buffer, selection, undo, find matches, painted layouts, `render_line`, caret painting and the a11y text gathering remain on `Prototype`; the view asks the window to build each visible line (`app.update(... render_line ...)`). Editing rules therefore stay in one place, and `Document` never becomes an entity.
+- **One source view for all tabs.** Per-tab editor scroll already lives in `Document::lines`, and the view has no per-tab state of its own. It is placed uncached: a keystroke must redraw it, so caching would mean notifying it on every edit, caret move and find change for no gain.
+- **Editing-key handlers wrap only the source view.** The window root is also an ancestor of the find fields; putting Backspace there would let it reach the document while typing a query. The handlers sit on a wrapper around the source view, with the `Editor` key context doing the second half of the gating.
+- **Settings changes notify the cached panes.** Revealing the outline is a settings change; the cached view needed an explicit notify or its first frame could lag.
+
+### Options considered
+
+| Question | Chosen | Rejected, and why |
+| --- | --- | --- |
+| Where editing state lives | On the window | **Move buffer, selection, undo and find into the view**: duplicates `Document`, breaks its unit tests, and touches saving, recovery, tabs and every command. |
+| View count | One shared source view | **One per document**: there is no per-tab view state; scroll is already in `Document::lines`. |
+| Caching | Uncached | **Cached with per-edit notify**: every keystroke and caret move would bust it; the parent already redraws for the editor. |
+| Key handlers | Wrapper around the source view | **Window root**: a Backspace in the find field would reach the document. **Inside the view**: 30 actions would need forwarding into the window. |
+| Line rendering | Window's `render_line`, called by the view | **Move painting into the view now**: larger and not needed for the module boundary; left as a TODO. |
+
+### Evidence
+
+- `cargo clippy --workspace --all-targets -- -D warnings` clean; `cargo test --workspace` 140 passed, 1 ignored (139 with all features).
+- `scripts/e2e.ps1`: 45 pass, 4 documented skips, 0 fail, twice in a row. It now checks that a Backspace in the find field leaves the document alone, and the outline and settings checks that were timing-sensitive pass.
+- `bench.ps1` on 25 Nov 2026 after the source view: start 466 ms, 17.3 MB after 10 s, typing 1.7 / 2.5 ms p50/p95, preview 34 ms, program 21.19 MB.
+
+### Consequences
+
+- The window still performs the per-line work through the view's item processor; moving painting into the view is the next step in `TODO.md`.
+- The source view is thin by design: it is the boundary for focus, input and a11y, not a second home for editing logic.
+- A revealed cached pane must be notified (settings changes now do this); adding another cached pane means adding its reveal path to that list.
+
 ## 2026-11-25: The preview and outline are cached child views
 
 Context: `TODO.md`'s largest structural item. `Prototype` was one view, so every keystroke rebuilt the menu bar, toolbar, tabs, outline, visible preview blocks and status bar. The preview and outline are the expensive parts and change only on a parse, a theme/font change or a tab switch.
