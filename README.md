@@ -30,10 +30,10 @@ Release-build measurements on an i5-9300H with 16 GB RAM, using `scripts/fixture
 | Installer | 6.30 MB | ≤ 6 MB | 10 MB |
 | Program (`marky.exe`) | 21.12 MB | ≤ 22 MB | 24 MB |
 | Portable ZIP | 8.78 MB | — | — |
-| Startup, ready to edit | 445 ms | ≤ 900 ms | 1,000 ms |
+| Startup, ready to edit | 437 ms | ≤ 900 ms | 1,000 ms |
 | Typing | 1.8 ms p50 / 2.6 ms p95 | ≤ 20 ms | 33 ms |
-| Preview after typing stops | 33 ms | ≤ 200 ms | 400 ms |
-| Memory, 10 s after launch | 17.5 MB | ≤ 35 MB | 60 MB |
+| Preview after typing stops | 32 ms | ≤ 200 ms | 400 ms |
+| Memory, 10 s after launch | 17.3 MB | ≤ 35 MB | 60 MB |
 
 The program grew to accommodate all Mermaid diagram types in one executable; the accepted reasons are in [DECISION.md](DECISION.md). The installer is 6.30 MB, 0.30 MB over its 6 MB target and under the 10 MB hard limit.
 

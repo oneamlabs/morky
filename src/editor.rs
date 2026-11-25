@@ -80,16 +80,21 @@ actions!(
 
 mod a11y;
 mod chrome;
+mod closing;
 mod disk;
+mod document;
 mod drag;
 mod draw;
 mod editing;
 mod find;
+mod input;
 mod lists;
 mod recovery;
 mod tabs;
 
 pub use chrome::*;
+pub use document::Document;
+use document::{file_name, headings_of, links_of, Counts, ImagesInUse, Parsed};
 use drag::Drag;
 use recovery::Recovery;
 use tabs::Tabs;
@@ -123,203 +128,6 @@ enum OpenMenu {
     File,
     Edit,
     View,
-}
-
-struct Document {
-    /// Finds the document again when a background parse finishes, even if tabs moved meanwhile.
-    id: u64,
-    /// Empty for a New Tab document until it is saved.
-    path: String,
-    meta: FileMeta,
-    /// From the last read or save; a watcher event is ours when the file still has this time.
-    mtime_ms: u64,
-    /// Lossy decode. Saving would corrupt the file, so Save refuses it.
-    read_only: bool,
-    /// A recovered document's text is unsaved even though its undo history is empty.
-    restored: bool,
-    buffer: Buffer,
-    selected: Range<usize>,
-    /// The caret is at `selected.start` when the selection was made backwards.
-    selection_reversed: bool,
-    marked: Option<Range<usize>>,
-    /// Shared with the next background parse, which compares its result against them.
-    blocks: Arc<Vec<Block>>,
-    /// The formulas and diagrams in `blocks`, gathered by the parse: freeing unused images reads these.
-    images: Arc<ImagesInUse>,
-    /// The preview's links and the outline's headings, gathered from `blocks` by the parse, so
-    /// drawing a frame does not walk every block.
-    links: Vec<(Arc<str>, usize)>,
-    headings: Vec<Heading>,
-    /// Syntax colours per source line, from the last background parse.
-    spans: Vec<Vec<Span>>,
-    /// The longest line in characters, from the last parse: the width to scroll to when word wrap is off.
-    longest_line: usize,
-    parse_task: Option<Task<()>>,
-    last_parse_ms: f64,
-    /// The last edit the preview has not caught up with; logged as `preview_ms` when it does.
-    edited_at: Option<Instant>,
-    /// One item per source line.
-    lines: ListState,
-    /// One item per preview block.
-    block_list: ListState,
-    followed_cursor_line: Option<usize>,
-    synced_source_line: Option<usize>,
-    /// Words and UTF-16 characters, counted with each background parse, for the status bar.
-    counts: Counts,
-    /// The last update's time from keystroke to preview, and its parse time, for the status bar.
-    last_preview: Option<(f64, f64)>,
-    /// Dropping this stops watching the file.
-    watcher: Option<notify::RecommendedWatcher>,
-    /// Replaced by every watcher event, so a burst checks the file once after it settles.
-    external_task: Option<Task<()>>,
-    /// Replaced by every edit: auto-saves once typing stops.
-    auto_save_task: Option<Task<()>>,
-    /// The save being written on a background thread, and the target of one asked for meanwhile.
-    save_task: Option<Task<()>>,
-    queued_save: Option<PathBuf>,
-}
-
-/// What a background parse hands back to the window. Everything that costs time in proportion to
-/// the document is done on the parse thread, so applying it stays cheap at any size (at 8 MB the
-/// comparison alone took 55–67 ms on the main thread).
-struct Parsed {
-    blocks: Vec<Block>,
-    spans: Vec<Vec<Span>>,
-    longest: usize,
-    counts: Counts,
-    /// The blocks this parse was compared against, and what changed: the range of old blocks to
-    /// replace and how many new ones replace them.
-    base: Arc<Vec<Block>>,
-    changed: (Range<usize>, usize),
-    images: ImagesInUse,
-    links: Vec<(Arc<str>, usize)>,
-    headings: Vec<Heading>,
-}
-
-/// The formula and diagram sources a document shows, which keep their bitmaps alive.
-#[derive(Default)]
-struct ImagesInUse {
-    diagrams: HashSet<String>,
-    /// TeX and whether it is display math.
-    formulas: HashSet<(String, bool)>,
-}
-
-impl ImagesInUse {
-    fn of(blocks: &[Block]) -> Self {
-        let mut images = Self::default();
-        for block in blocks {
-            match block.kind {
-                Kind::Diagram => {
-                    images.diagrams.insert(block.text.clone());
-                }
-                Kind::Math => {
-                    images.formulas.insert((block.text.clone(), true));
-                }
-                _ => {}
-            }
-            let cells = block.table.iter().flat_map(|table| table.rows.iter().flatten());
-            for run in block.runs.iter().chain(cells.flatten()).filter(|run| run.style.math) {
-                images.formulas.insert((run.text.clone(), run.style.display));
-            }
-        }
-        images
-    }
-}
-
-/// One recovery write: the held snapshots and each dirty document as a rope, which is cheap to
-/// copy on the main thread and is turned into text on the thread that writes it.
-struct RecoveryWrite {
-    held: Vec<store::Snapshot>,
-    documents: Vec<(Option<String>, ropey::Rope, FileMeta)>,
-}
-
-impl RecoveryWrite {
-    /// Saves the snapshots, or clears the file when nothing is left to recover.
-    fn write(self, dir: &Path) -> std::io::Result<()> {
-        let mut snapshots = self.held;
-        snapshots.extend(self.documents.into_iter().map(|(path, rope, meta)| store::Snapshot { path, text: rope.to_string(), meta }));
-        if snapshots.is_empty() { store::clear_snapshots(dir) } else { store::save_snapshots(dir, &snapshots) }
-    }
-}
-
-/// The status bar's counts: words as the app counts them (`/\S+/g`), characters as JavaScript's `length`.
-#[derive(Clone, Copy, Default)]
-struct Counts {
-    words: usize,
-    chars: usize,
-}
-
-impl Counts {
-    fn of(text: &str) -> Self {
-        Self { words: text.split_whitespace().count(), chars: text.encode_utf16().count() }
-    }
-}
-
-impl Document {
-    fn open(opened: OpenedFile, id: u64, cx: &mut Context<Prototype>) -> Self {
-        let buffer = Buffer::new(&opened.text);
-        let lines = ListState::new(buffer.line_count(), ListAlignment::Top, px(OVERDRAW));
-        // The preview follows the source pane, so scrolling the source re-renders the view.
-        lines.set_scroll_handler(cx.listener(|_, _: &ListScrollEvent, _, cx| cx.notify()));
-        Self {
-            id,
-            path: opened.path,
-            meta: opened.meta,
-            mtime_ms: opened.mtime_ms,
-            read_only: opened.read_only,
-            restored: false,
-            buffer,
-            selected: 0..0,
-            selection_reversed: false,
-            marked: None,
-            blocks: Arc::default(),
-            images: Arc::default(),
-            links: Vec::new(),
-            headings: Vec::new(),
-            spans: Vec::new(),
-            longest_line: 0,
-            parse_task: None,
-            last_parse_ms: 0.,
-            edited_at: None,
-            lines,
-            block_list: ListState::new(0, ListAlignment::Top, px(OVERDRAW)),
-            followed_cursor_line: None,
-            synced_source_line: None,
-            counts: Counts::default(),
-            last_preview: None,
-            watcher: None,
-            external_task: None,
-            auto_save_task: None,
-            save_task: None,
-            queued_save: None,
-        }
-    }
-
-    fn is_dirty(&self) -> bool {
-        self.restored || self.buffer.is_dirty()
-    }
-
-    fn display_name(&self) -> String {
-        if self.path.is_empty() { "Untitled".to_string() } else { file_name(&self.path) }
-    }
-
-    fn cursor(&self) -> usize {
-        if self.selection_reversed { self.selected.start } else { self.selected.end }
-    }
-
-    /// Keeps the line list and the syntax colours in step with an edit. The edited lines keep their
-    /// old colours until the next parse (at most 150 ms after typing stops), so a heading being typed
-    /// does not flicker plain; lines the edit added start plain.
-    fn splice_lines(&mut self, splice: LineSplice) {
-        self.lines.splice(splice.first..splice.first + splice.old, splice.new);
-        if splice.first >= self.spans.len() {
-            return;
-        }
-        let kept = splice.old.min(splice.new);
-        let old_end = (splice.first + splice.old).min(self.spans.len());
-        let replace = (splice.first + kept).min(old_end)..old_end;
-        self.spans.splice(replace, std::iter::repeat_with(Vec::new).take(splice.new - kept));
-    }
 }
 
 struct FindBar {
@@ -633,110 +441,6 @@ impl Prototype {
         cx.notify();
     }
 
-    fn dirty_count(&self) -> usize {
-        self.tabs.dirty_count()
-    }
-
-    fn close_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
-        if self.tabs.len() == 1 || index >= self.tabs.len() {
-            return;
-        }
-        if !self.tabs.documents()[index].is_dirty() {
-            self.remove_tab(index, cx);
-            return;
-        }
-        // Tabs can move while the prompt is open, so the answer finds the tab again by id.
-        let id = self.tabs.documents()[index].id;
-        let message = format!("Discard unsaved changes in {}?", self.tabs.documents()[index].display_name());
-        self.confirm_discard(&message, window, cx, move |this, _, cx| {
-            if let Some(index) = this.document_index(id) {
-                this.remove_tab(index, cx);
-            }
-        });
-    }
-
-    fn remove_tab(&mut self, index: usize, cx: &mut Context<Self>) {
-        if !self.tabs.remove(index) {
-            return;
-        }
-        self.doc_mut().synced_source_line = None;
-        self.release_unused_images(cx);
-        cx.notify();
-    }
-
-    /// Asks before unsaved edits are thrown away. The prompt is asynchronous, so `then` runs later, and only on Discard.
-    fn confirm_discard(
-        &mut self,
-        message: &str,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-        then: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>) + 'static,
-    ) {
-        let answer = window.prompt(PromptLevel::Warning, message, Some("Unsaved changes will be lost."), &["Discard", "Cancel"], cx);
-        cx.spawn_in(window, async move |this, cx| {
-            if !matches!(answer.await, Ok(0)) {
-                return;
-            }
-            let _ = this.update_in(cx, |this, window, cx| then(this, window, cx));
-        })
-        .detach();
-    }
-
-    /// The title-bar X and Quit both come here. Returns whether the window may close now.
-    pub fn may_close(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        if self.tabs.iter().any(|doc| doc.save_task.is_some()) {
-            self.close_after_saves(window, cx);
-            return false;
-        }
-        let dirty = self.dirty_count();
-        if dirty == 0 || self.close_confirmed {
-            // A postponed recovery survives a normal close; with nothing left to recover, this clears it.
-            self.flush_recovery();
-            return true;
-        }
-        let message = if dirty == 1 { "Discard unsaved changes in 1 file?".to_string() } else { format!("Discard unsaved changes in {dirty} files?") };
-        self.confirm_discard(&message, window, cx, |this, window, _| {
-            // Discarding everything: nothing is left to recover, and held snapshots stay held.
-            for document in this.tabs.documents_mut() {
-                document.restored = false;
-                document.buffer.mark_saved();
-            }
-            this.close_confirmed = true;
-            this.flush_recovery();
-            window.remove_window();
-        });
-        false
-    }
-
-    /// A close while a save is being written waits for it and then asks again, so the file is
-    /// complete and the unsaved-changes prompt sees what was saved. Saves take milliseconds.
-    fn close_after_saves(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.close_task.is_some() {
-            return;
-        }
-        self.close_task = Some(cx.spawn_in(window, async move |this, cx| {
-            loop {
-                cx.background_executor().timer(Duration::from_millis(15)).await;
-                let Ok(saving) = this.update(cx, |this, _| this.tabs.documents().iter().any(|doc| doc.save_task.is_some())) else { return };
-                if !saving {
-                    break;
-                }
-            }
-            let _ = this.update_in(cx, |this, window, cx| {
-                this.close_task = None;
-                if this.may_close(window, cx) {
-                    window.remove_window();
-                }
-            });
-        }));
-    }
-
-    fn quit(&mut self, _: &Quit, window: &mut Window, cx: &mut Context<Self>) {
-        if self.may_close(window, cx) {
-            cx.quit();
-        }
-    }
-
     // ----- Menus and view settings -----
 
     fn close_menu(&mut self, _: &MouseDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
@@ -895,90 +599,6 @@ impl Prototype {
 }
 
 
-impl EntityInputHandler for Prototype {
-    fn text_for_range(
-        &mut self,
-        range_utf16: Range<usize>,
-        actual_range: &mut Option<Range<usize>>,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
-    ) -> Option<String> {
-        let buffer = &self.doc().buffer;
-        let range = buffer.offset_of_utf16(range_utf16.start)..buffer.offset_of_utf16(range_utf16.end);
-        *actual_range = Some(buffer.utf16_of(range.start)..buffer.utf16_of(range.end));
-        Some(buffer.slice(range))
-    }
-
-    fn selected_text_range(&mut self, _ignore_disabled_input: bool, _window: &mut Window, _cx: &mut Context<Self>) -> Option<UTF16Selection> {
-        let doc = self.doc();
-        Some(UTF16Selection {
-            range: doc.buffer.utf16_of(doc.selected.start)..doc.buffer.utf16_of(doc.selected.end),
-            reversed: doc.selection_reversed,
-        })
-    }
-
-    fn marked_text_range(&self, _window: &mut Window, _cx: &mut Context<Self>) -> Option<Range<usize>> {
-        let doc = self.doc();
-        doc.marked.as_ref().map(|range| doc.buffer.utf16_of(range.start)..doc.buffer.utf16_of(range.end))
-    }
-
-    fn unmark_text(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {
-        self.doc_mut().marked = None;
-    }
-
-    /// Typed text and the end of an IME composition. Typing at the caret groups into one undo step.
-    fn replace_text_in_range(&mut self, range_utf16: Option<Range<usize>>, new_text: &str, _window: &mut Window, cx: &mut Context<Self>) {
-        let range = self.edit_range(range_utf16);
-        let kind = if range.is_empty() || self.doc().marked.as_ref() == Some(&range) { EditKind::Typing } else { EditKind::Other };
-        self.edit(range, new_text, kind, cx);
-    }
-
-    fn replace_and_mark_text_in_range(
-        &mut self,
-        range_utf16: Option<Range<usize>>,
-        new_text: &str,
-        new_selected_utf16: Option<Range<usize>>,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let range = self.edit_range(range_utf16);
-        let replaced_at = range.start;
-        self.edit(range, new_text, EditKind::Typing, cx);
-        let doc = self.doc_mut();
-        let end = replaced_at + new_text.len();
-        doc.marked = (!new_text.is_empty()).then_some(replaced_at..end);
-        if let Some(selected) = new_selected_utf16 {
-            let start = replaced_at + utf16_to_byte(new_text, selected.start);
-            doc.selected = start..replaced_at + utf16_to_byte(new_text, selected.end);
-        }
-    }
-
-    /// The IME asks where to put its candidate window. The caret painted last frame is the composition point;
-    /// its bounds already include scrolling, padding and the column.
-    fn bounds_for_range(&mut self, _range_utf16: Range<usize>, element_bounds: Bounds<Pixels>, window: &mut Window, _cx: &mut Context<Self>) -> Option<Bounds<Pixels>> {
-        Some(self.caret_bounds.unwrap_or_else(|| Bounds::new(element_bounds.origin, size(px(1.5), window.line_height()))))
-    }
-
-    /// The character under a point, in UTF-16 units, for IME reconversion by mouse. Only lines painted
-    /// in the last frame can answer. (GPUI's Windows backend does not yet ask: it handles no
-    /// `WM_IME_REQUEST`, so Windows' reconversion key cannot reach any GPUI view, at 9a8ab54 either.)
-    fn character_index_for_point(&mut self, position: Point<Pixels>, _window: &mut Window, _cx: &mut Context<Self>) -> Option<usize> {
-        let line = self.visible_line_at(position.y)?;
-        let layout = self.painted_layout(line)?;
-        let offset = self.offset_at(line, layout, position);
-        Some(self.doc().buffer.utf16_of(offset))
-    }
-}
-
-impl Prototype {
-    fn edit_range(&self, range_utf16: Option<Range<usize>>) -> Range<usize> {
-        let doc = self.doc();
-        if let Some(range) = range_utf16 {
-            return doc.buffer.offset_of_utf16(range.start)..doc.buffer.offset_of_utf16(range.end);
-        }
-        doc.marked.clone().unwrap_or_else(|| doc.selected.clone())
-    }
-}
 
 impl Focusable for Prototype {
     fn focus_handle(&self, _: &App) -> FocusHandle {
@@ -1077,53 +697,6 @@ impl Render for Prototype {
     }
 }
 
-/// A heading for the outline: its 1-based source line, level and text.
-struct Heading {
-    line: usize,
-    level: u8,
-    text: SharedString,
-}
-
-fn headings_of(blocks: &[Block]) -> Vec<Heading> {
-    blocks
-        .iter()
-        .filter_map(|block| match block.kind {
-            Kind::Heading(level) => Some(Heading { line: block.line, level, text: SharedString::from(block.text.clone()) }),
-            _ => None,
-        })
-        .collect()
-}
-
-/// Every link in `blocks`, images aside, in document order, with the index of its block.
-fn links_of(blocks: &[Block]) -> Vec<(Arc<str>, usize)> {
-    let mut links = Vec::new();
-    for (index, block) in blocks.iter().enumerate() {
-        let cells = block.table.iter().flat_map(|table| table.rows.iter().flatten().flatten());
-        for run in block.runs.iter().chain(cells) {
-            let Some(link) = run.style.link.as_ref() else { continue };
-            if !link.starts_with("image:") {
-                links.push((link.clone(), index));
-            }
-        }
-    }
-    links
-}
-
-fn file_name(path: &str) -> String {
-    Path::new(path).file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_else(|| path.to_string())
-}
-
-fn utf16_to_byte(text: &str, utf16_offset: usize) -> usize {
-    let mut utf16 = 0;
-    for (index, ch) in text.char_indices() {
-        if utf16 >= utf16_offset {
-            return index;
-        }
-        utf16 += ch.len_utf16();
-    }
-    text.len()
-}
-
 /// Where the caret is drawn for `column` in a painted line. A wrap point is both the end of one
 /// visual row and the start of the next; GPUI places it at the end, but a caret there belongs at the
 /// start of the next row (CodeMirror's forward association), where typing will put the text.
@@ -1137,7 +710,6 @@ fn caret_origin(layout: &TextLayout, column: usize, next: Option<usize>) -> Opti
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::preview;
 
     /// The preview's pause is twice the last parse, held inside 30–150 ms: too short and a burst of
     /// keystrokes parses on every one, too long and the preview lags behind typing.
@@ -1149,92 +721,5 @@ mod tests {
         assert_eq!(parse_pause(75.0), Duration::from_millis(150));
         assert_eq!(parse_pause(500.0), Duration::from_millis(150));
     }
-
-    #[test]
-    fn headings_keep_their_line_level_and_text() {
-        let blocks = preview::blocks("# One\n\nText.\n\n### Three\n");
-        let headings = headings_of(&blocks);
-        assert_eq!(headings.len(), 2);
-        assert_eq!((headings[0].line, headings[0].level), (1, 1));
-        assert_eq!(headings[0].text.as_ref(), "One");
-        assert_eq!((headings[1].line, headings[1].level), (5, 3));
-    }
-
-    /// Image runs carry an `image:` destination so the preview can draw them; the arrow keys walk
-    /// links, and an image is not one.
-    #[test]
-    fn links_skip_images_and_keep_document_order() {
-        let blocks = preview::blocks("See [a](one.md) and ![pic](x.png).\n\nThen [b](two.md).\n");
-        let links = links_of(&blocks);
-        assert_eq!(links.iter().map(|(link, _)| link.as_ref()).collect::<Vec<_>>(), ["one.md", "two.md"]);
-        assert_eq!(links.iter().map(|(_, block)| *block).collect::<Vec<_>>(), [0, 1]);
-    }
-
-    #[test]
-    fn links_in_table_cells_are_found() {
-        let blocks = preview::blocks("| Col |\n| --- |\n| [a](cell.md) |\n");
-        assert_eq!(links_of(&blocks).iter().map(|(link, _)| link.as_ref()).collect::<Vec<_>>(), ["cell.md"]);
-    }
-
-    #[test]
-    fn file_name_is_the_last_component() {
-        assert_eq!(file_name(r"C:\docs\notes.md"), "notes.md");
-        assert_eq!(file_name("/home/a/b.txt"), "b.txt");
-        assert_eq!(file_name("bare.md"), "bare.md");
-    }
-
-    /// Windows text input and GPUI speak UTF-16; the buffer counts bytes.
-    #[test]
-    fn utf16_offsets_map_to_byte_offsets() {
-        assert_eq!(utf16_to_byte("abc", 0), 0);
-        assert_eq!(utf16_to_byte("abc", 2), 2);
-        // "é" is one UTF-16 unit but two bytes.
-        assert_eq!(utf16_to_byte("aéb", 2), 1 + 2);
-        // An astral character is a surrogate pair: two units, four bytes.
-        assert_eq!(utf16_to_byte("a😀b", 3), 1 + 4);
-        // Past the end clamps to the length.
-        assert_eq!(utf16_to_byte("abc", 99), 3);
-    }
-
-    /// Freeing a bitmap needs to know every formula and diagram the open documents still show.
-    #[test]
-    fn images_in_use_gathers_formulas_and_diagrams() {
-        let blocks = preview::blocks("```math\nE=mc^2\n```\n\n```mermaid\nflowchart LR\n  A-->B\n```\n\nInline $x+1$ and `$not math$`.\n");
-        let images = ImagesInUse::of(&blocks);
-        assert!(images.formulas.contains(&("E=mc^2".to_string(), true)));
-        assert!(images.formulas.contains(&("x+1".to_string(), false)));
-        assert_eq!(images.diagrams.len(), 1);
-        // Inline code is not a formula.
-        assert!(!images.formulas.iter().any(|(tex, _)| tex.contains("not math")));
-    }
-
-    #[test]
-    fn images_in_use_finds_formulas_in_table_cells() {
-        let blocks = preview::blocks("| Math |\n| --- |\n| $y$ |\n");
-        assert!(ImagesInUse::of(&blocks).formulas.contains(&("y".to_string(), false)));
-    }
-
-    /// The status bar reports words as `/\S+/g` and characters as JavaScript's `length`, both of
-    /// which the app did in JavaScript.
-    #[test]
-    fn counts_are_words_and_utf16_characters() {
-        let counts = Counts::of("one two  three\n");
-        assert_eq!(counts.words, 3);
-        assert_eq!(counts.chars, 15);
-        // An astral character counts as two, as JavaScript's length does.
-        assert_eq!(Counts::of("😀").chars, 2);
-        assert_eq!(Counts::of("").words, 0);
-    }
-
-    /// A `Block` is the only input these helpers need; make sure they tolerate the shapes a parse
-    /// can produce (no blocks at all, and a block with no runs).
-    #[test]
-    fn helpers_tolerate_empty_blocks() {
-        let blocks: Vec<Block> = Vec::new();
-        assert!(headings_of(&blocks).is_empty());
-        assert!(links_of(&blocks).is_empty());
-        assert!(ImagesInUse::of(&blocks).formulas.is_empty());
-        let no_runs = Block { kind: Kind::Paragraph, text: String::new(), runs: Vec::new(), line: 1, table: None, code: None, src: None };
-        assert!(links_of(std::slice::from_ref(&no_runs)).is_empty());
-    }
 }
+

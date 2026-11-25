@@ -6,6 +6,22 @@
 
 use super::*;
 
+/// One recovery write: the held snapshots and each dirty document as a rope, which is cheap to
+/// copy on the main thread and is turned into text on the thread that writes it.
+pub(super) struct RecoveryWrite {
+    pub(super) held: Vec<store::Snapshot>,
+    pub(super) documents: Vec<(Option<String>, ropey::Rope, FileMeta)>,
+}
+
+impl RecoveryWrite {
+    /// Saves the snapshots, or clears the file when nothing is left to recover.
+    pub(super) fn write(self, dir: &Path) -> std::io::Result<()> {
+        let mut snapshots = self.held;
+        snapshots.extend(self.documents.into_iter().map(|(path, rope, meta)| store::Snapshot { path, text: rope.to_string(), meta }));
+        if snapshots.is_empty() { store::clear_snapshots(dir) } else { store::save_snapshots(dir, &snapshots) }
+    }
+}
+
 /// The recovery state: where snapshots live, any held until the user answers, and what the last
 /// write contained so an unchanged document is not serialised again.
 pub(super) struct Recovery {
