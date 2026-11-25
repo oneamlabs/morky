@@ -2,14 +2,14 @@
 
 Marky is a fast Markdown editor for Windows, written in Rust with [GPUI](https://gpui.rs/). It has no WebView2 or bundled browser: the window, editor, preview and menus are drawn with DirectX 11, and a typical document idles around 18 MB.
 
-**v0.4.0** · [Download a release](https://github.com/vikasdfghjl/marky/releases) · [Changelog](CHANGELOG.md) · [Contributor guide](AGENTS.md)
+**v0.4.6** · [Download a release](https://github.com/vikasdfghjl/marky/releases) · [Changelog](CHANGELOG.md) · [Contributor guide](AGENTS.md)
 
 ## Features
 
 - **Editing:** syntax highlighting, lists that continue on Enter, find and replace, word wrap, tabs with separate undo histories, drag and drop, opening from Explorer or the command line, ten recent files, and a remembered window size and position. Saves keep the file's BOM and line endings.
-- **Preview:** scrolling stays in step with the editor, and only changed blocks are replaced. Tables, task lists, strikethrough, autolinks, footnotes, definition lists, abbreviations, subscript, superscript, marked text, curly quotes and dashes, Mermaid diagrams, and math.
+- **Preview:** scrolling stays in step with the editor, and only changed blocks are replaced. Tables, task lists, strikethrough, autolinks, footnotes, definition lists, abbreviations, frontmatter metadata, subscript, superscript, marked text, curly quotes and dashes, Mermaid diagrams, and math.
 - **File safety:** atomic saves, prompts before discarding unsaved changes, reload or keep when the file changes on disk, auto-save, and crash recovery every 30 seconds. Files over 128 MB are refused before they are read.
-- **Privacy:** Markdown HTML is not rendered. Remote images do not load. Web and mail links open outside the app; relative links open only Markdown and text files next to the document.
+- **Privacy:** Markdown HTML is never rendered or executed; it shows as text. Remote images do not load. Web and mail links open outside the app; relative links open only existing Markdown and text files.
 - **Interface:** light, dark or system theme, high-contrast support, drawn menus, outline, reading view, and a status bar with line, word, character, encoding and line-ending details.
 - **Accessibility:** the editor exposes its text and caret to Windows UI Automation; the preview can be read by character, word and line; menus have underlined access keys; the settings panel keeps keyboard focus; links are one preview tab stop rather than many.
 
@@ -23,21 +23,23 @@ Settings and recent files live in `%APPDATA%\dev.marky.editor\`; recovery snapsh
 
 ## Benchmarks
 
-Release-build measurements on an i5-9300H with 16 GB RAM, using `scripts/fixtures/typical.md` (5 KB). Values are from **7 Nov 2026**, medians of five runs unless noted. Budgets are release-blocking; the measurement notes are in the [contributor guide](AGENTS.md).
+Release-build measurements on an i5-9300H with 16 GB RAM, using `scripts/fixtures/typical.md` (5 KB). Values are from **25 Nov 2026**, medians of five runs unless noted. Budgets are release-blocking; the measurement notes are in the [contributor guide](AGENTS.md).
 
 | Metric | Measured | Target | Hard limit |
 | --- | ---: | ---: | ---: |
-| Installer | 6.27 MB | ≤ 6 MB | 10 MB |
-| Program (`marky.exe`) | 21.07 MB | ≤ 22 MB | 24 MB |
+| Installer | 6.30 MB | ≤ 6 MB | 10 MB |
+| Program (`marky.exe`) | 21.19 MB | ≤ 22 MB | 24 MB |
 | Portable ZIP | 8.78 MB | — | — |
-| Startup, ready to edit | 450 ms | ≤ 900 ms | 1,000 ms |
-| Typing | 1.8 ms p50 / 2.9 ms p95 | ≤ 20 ms | 33 ms |
-| Preview after typing stops | 31 ms | ≤ 200 ms | 400 ms |
-| Memory, 10 s after launch | 17.5 MB | ≤ 35 MB | 60 MB |
+| Startup, ready to edit | 466 ms | ≤ 900 ms | 1,000 ms |
+| Typing | 1.7 ms p50 / 2.5 ms p95 | ≤ 20 ms | 33 ms |
+| Preview after typing stops | 34 ms | ≤ 200 ms | 400 ms |
+| Memory, 10 s after launch | 17.3 MB | ≤ 35 MB | 60 MB |
 
-The program grew to accommodate all Mermaid diagram types in one executable; the accepted reasons are in [DECISION.md](DECISION.md). The installer is 6.27 MB, 0.27 MB over its 6 MB target and under the 10 MB hard limit.
+The program grew to accommodate all Mermaid diagram types in one executable; the accepted reasons are in [DECISION.md](DECISION.md). The installer is 6.30 MB, 0.30 MB over its 6 MB target and under the 10 MB hard limit.
 
-Large-file numbers from the migration prototype (`scripts/bench-large.ps1`, 7 Nov 2026) are in [docs/gpui-migration.md](docs/gpui-migration.md). Re-measure them before changing preview or editor layout.
+`bench.ps1` was re-run on 25 Nov 2026 after the source editor became its own view and after the preview and outline became cached child views (and earlier after formulas and diagrams shared one SVG rasteriser and the editor was split into modules); every figure stayed within noise. The installer and portable ZIP figures are from before those code changes and have not been re-measured.
+
+Large-file numbers from the migration prototype (`scripts/bench-large.ps1`, 7 Nov 2026) are in [docs/gpui-migration.md](docs/gpui-migration.md). After the view split, `bench-large.ps1 -Via Messages` at 8 MB (25 Nov 2026) measured a 507 ms start, 149 MB idle, no frame over 50 ms while typing or with the preview catching up, and an 812 ms preview (653 ms parse); typing latency from posted keys is not comparable with SendKeys.
 
 ## Keyboard shortcuts
 
@@ -65,7 +67,7 @@ The preview is one tab stop. With it focused, Left/Right select a link, Enter fo
 
 ## Development
 
-**Requirements:** Windows 10/11, Rust with the MSVC toolchain, and the C++ build tools. NSIS is needed only to build the installer; CI installs it with Chocolatey. Node.js is needed only to regenerate third-party notices.
+**Requirements:** Windows 10/11, Rust with the MSVC toolchain, and the C++ build tools. NSIS is needed only to build the installer; CI installs it with Chocolatey. There is no Node or frontend toolchain: notices come from the `xtask` crate.
 
 Built with [GPUI](https://gpui.rs/) from Zed's repository, [pulldown-cmark](https://docs.rs/pulldown-cmark), [ropey](https://docs.rs/ropey), [RaTeX](https://github.com/erweixin/RaTeX), [merman](https://github.com/Latias94/merman) and tree-sitter.
 
@@ -86,6 +88,7 @@ The same workflow is in the `Makefile`:
 ```bash
 make build
 make check
+make notices
 make installer
 make size
 make e2e
@@ -99,7 +102,7 @@ make release VERSION=0.4.0
 | `./scripts/check-size.ps1` | Enforce program and installer size budgets |
 | `./scripts/bench.ps1` | Measure startup, typing, preview and memory |
 | `./scripts/bench-large.ps1` | Measure 100 KB to 8 MB documents |
-| `npm run notices` | Regenerate notices after dependency changes |
+| `make notices` (`cargo run -p xtask -- notices`) | Regenerate notices after dependency changes |
 
 `scripts/e2e.ps1` drives the release build through Windows UI Automation and uses temporary `APPDATA`/`LOCALAPPDATA`, so it does not read or change your settings.
 

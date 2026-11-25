@@ -1,6 +1,3 @@
-# Dependencies (the notice generator is the only Node tool)
-node_modules/
-
 # Rust build output
 target/
 

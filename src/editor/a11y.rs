@@ -57,7 +57,7 @@ pub fn lines_to_describe(top: usize, line_count: usize, caret_line: usize, ancho
 }
 
 /// Keeps lines until the character budget is spent, always keeping the lines with the selection.
-pub fn within_budget(lines: Vec<Line>, keep: [usize; 2]) -> Vec<Line> {
+pub fn within_budget(lines: Vec<Line>, keep: &[usize]) -> Vec<Line> {
     let mut spent = 0;
     lines
         .into_iter()
@@ -70,6 +70,18 @@ pub fn within_budget(lines: Vec<Line>, keep: [usize; 2]) -> Vec<Line> {
             true
         })
         .collect()
+}
+
+/// AccessKit marks a line end with the line break character, so every described line but the last
+/// keeps one. The preview's lines are a slice of blocks rather than document lines, so it marks them
+/// by position; the editor marks document lines instead (see `describe_text`).
+pub fn end_lines(lines: &mut [Line]) {
+    let last = lines.len().saturating_sub(1);
+    for line in lines.iter_mut().take(last) {
+        if !line.text.ends_with('\n') {
+            line.text.push('\n');
+        }
+    }
 }
 
 /// The runs for `lines` and the selection between `anchor` and `focus`, with node ids from `id_of`
@@ -220,5 +232,17 @@ mod tests {
         let (runs, selection) = build_runs(&[line(0, "")], Point { line: 0, char_index: 0 }, Point { line: 0, char_index: 0 }, id);
         assert_eq!(runs.len(), 1);
         assert!(selection.is_some());
+    }
+
+    #[test]
+    fn described_lines_end_in_a_break_but_the_last() {
+        let mut lines = vec![line(0, "one"), line(1, "two"), line(2, "three")];
+        end_lines(&mut lines);
+        assert_eq!(lines.iter().map(|line| line.text.as_str()).collect::<Vec<_>>(), ["one\n", "two\n", "three"]);
+        // A single line, or none, has no break to add.
+        let mut one = vec![line(0, "only")];
+        end_lines(&mut one);
+        assert_eq!(one[0].text, "only");
+        end_lines(&mut []);
     }
 }

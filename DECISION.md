@@ -2,6 +2,149 @@
 
 Decisions about Marky that are not obvious from the code, with the reasons and the evidence behind them. Newest first. Each entry says what was decided, what else was considered, and what it costs; change one only with new evidence, and add a new entry rather than rewriting an old one.
 
+## 2026-11-25: Node is dropped; notices come from xtask
+
+Context: `package.json`, `package-lock.json`, `tsconfig.scripts.json` and one 181-line TypeScript file existed only to generate `THIRD_PARTY_NOTICES.txt`. That made Node a development requirement and `npm audit` a CI step that could fail on the generator's own dependencies, unrelated to Marky.
+
+### Decision
+
+- **A new workspace member, `xtask`, generates the notices.** `cargo run -p xtask -- notices` runs `cargo metadata` and `cargo tree` (the same commands the TypeScript did), reads each crate's license files, groups identical texts, and writes the file. It uses `serde_json` and `regex`, both already in the lockfile.
+- **The output matches the old generator.** Package ids are sorted with `-` and `_` ignored (`localeCompare`'s primary weight), so `bit_field` stays before `bit-set` and `float-cmp` before `float_next`; license-file selection, MIT/BSD templates, author parsing and the 80-column rule are ported as-is. The only intended diff is the header's generator command and the order of a few shared-text groups.
+- **The Node files are deleted**: `package.json`, `package-lock.json`, `tsconfig.scripts.json`, `scripts/third-party-notices.ts`; `.gitignore` loses `node_modules/`. CI drops `setup-node`, `npm ci`, the `tsc` check and `npm audit`; it runs `cargo run -p xtask -- notices` and checks the diff. `release.ps1` only syncs `Cargo.lock` and the README badge now.
+- **`xtask` ships nothing.** It is a normal workspace member, so `cargo build --release --workspace` builds `xtask.exe` next to `marky.exe`; the installer, portable ZIP and size check only reference `marky.exe`.
+
+### Options considered
+
+| Question | Chosen | Rejected, and why |
+| --- | --- | --- |
+| Generator | An `xtask` workspace member | **Keep Node**: a second toolchain for one file, plus irrelevant npm advisories. **`cargo-about`**: needs installing in CI, its own config, and a different output. **A second `[[bin]]` in Marky**: mixes a build tool into the app package and makes `cargo build` produce an extra program. |
+| Output | Reproduce the old file | **Redesign the notices**: churn for no user benefit, and CI would diff a large rewrite. |
+| Workspace | Member, built by `--workspace` | **Standalone crate with its own lockfile**: a second lockfile to keep current; **excluded package**: `cargo run -p xtask` would not work from the root. |
+
+### Evidence
+
+- `cargo run -p xtask -- notices` regenerates the same 321 packages, 166 distinct license texts and 0 without a license file; the committed file changes only in the header and a few group positions.
+- `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace` pass with `xtask` in the workspace; the Marky program is unaffected and still 21.19 MB.
+
+### Consequences
+
+- `cargo build --release --workspace` builds a tool that is never packaged; it is small and not part of the size budgets.
+- `Cargo.lock` now records `xtask` and its two direct dependencies; none of them are linked into `marky.exe`.
+- Adding a dependency still requires regenerating the notices, now with `cargo run -p xtask -- notices` (`make notices`).
+
+## 2026-11-25: The source editor is its own view
+
+Context: the last piece of the view split. The editor carries Windows text input, IME, the caret and accessibility, so it is the riskiest pane to move; the window also owns the buffer, undo, find matches and every editing rule.
+
+### Decision
+
+- **`SourcePane` owns the editor shell, focus, key context, input handler and a11y node.** It shares the window's `focus` handle, implements `EntityInputHandler`, registers the `InputLayer`, and renders the source div with `key_context("Editor")` and `MultilineTextInput`.
+- **Editing state stays on the window.** The buffer, selection, undo, find matches, painted layouts, `render_line`, caret painting and the a11y text gathering remain on `Prototype`; the view asks the window to build each visible line (`app.update(... render_line ...)`). Editing rules therefore stay in one place, and `Document` never becomes an entity.
+- **One source view for all tabs.** Per-tab editor scroll already lives in `Document::lines`, and the view has no per-tab state of its own. It is placed uncached: a keystroke must redraw it, so caching would mean notifying it on every edit, caret move and find change for no gain.
+- **Editing-key handlers wrap only the source view.** The window root is also an ancestor of the find fields; putting Backspace there would let it reach the document while typing a query. The handlers sit on a wrapper around the source view, with the `Editor` key context doing the second half of the gating.
+- **Settings changes notify the cached panes.** Revealing the outline is a settings change; the cached view needed an explicit notify or its first frame could lag.
+
+### Options considered
+
+| Question | Chosen | Rejected, and why |
+| --- | --- | --- |
+| Where editing state lives | On the window | **Move buffer, selection, undo and find into the view**: duplicates `Document`, breaks its unit tests, and touches saving, recovery, tabs and every command. |
+| View count | One shared source view | **One per document**: there is no per-tab view state; scroll is already in `Document::lines`. |
+| Caching | Uncached | **Cached with per-edit notify**: every keystroke and caret move would bust it; the parent already redraws for the editor. |
+| Key handlers | Wrapper around the source view | **Window root**: a Backspace in the find field would reach the document. **Inside the view**: 30 actions would need forwarding into the window. |
+| Line rendering | Window's `render_line`, called by the view | **Move painting into the view now**: larger and not needed for the module boundary; left as a TODO. |
+
+### Evidence
+
+- `cargo clippy --workspace --all-targets -- -D warnings` clean; `cargo test --workspace` 140 passed, 1 ignored (139 with all features).
+- `scripts/e2e.ps1`: 45 pass, 4 documented skips, 0 fail, twice in a row. It now checks that a Backspace in the find field leaves the document alone, and the outline and settings checks that were timing-sensitive pass.
+- `bench.ps1` on 25 Nov 2026 after the source view: start 466 ms, 17.3 MB after 10 s, typing 1.7 / 2.5 ms p50/p95, preview 34 ms, program 21.19 MB.
+
+### Consequences
+
+- The window still performs the per-line work through the view's item processor; moving painting into the view is the next step in `TODO.md`.
+- The source view is thin by design: it is the boundary for focus, input and a11y, not a second home for editing logic.
+- A revealed cached pane must be notified (settings changes now do this); adding another cached pane means adding its reveal path to that list.
+
+## 2026-11-25: The preview and outline are cached child views
+
+Context: `TODO.md`'s largest structural item. `Prototype` was one view, so every keystroke rebuilt the menu bar, toolbar, tabs, outline, visible preview blocks and status bar. The preview and outline are the expensive parts and change only on a parse, a theme/font change or a tab switch.
+
+### Decision
+
+- **The preview and outline are `Entity` views** (`editor/preview_pane.rs`, `editor/outline_pane.rs`), placed by the window with `Entity::cached`. GPUI caches the rendered subtree until the entity calls `cx.notify()` (or its bounds/text style change), and a cached view is laid out from a supplied style rather than measured, so each is wrapped in a sized flex cell and given a relative fill.
+- **Views live on the window, not on `Document`**: `Prototype::views: HashMap<u64, TabViews>`, keyed by document id. `Document` stays free of GPUI entities, so its unit tests still need no `App`. Each tab keeps its own preview scroll, link selection and outline scroll.
+- **The parent feeds content and look**: a parse hands the pane its new blocks, links and changed range; a theme/font change updates every pane; Save As updates the folder; a reload clears both panes. The outline receives the heading under the caret and is notified only when that index changes.
+- **Actions go back through a `WeakEntity<Prototype>`**: preview links and outline jumps call the window, which owns the app's link rules and focus. In-preview anchors (`#fn:`, `#fnref:`, other `#`) are handled inside the pane and never reach the window.
+- **Cache invalidation is explicit**: wheel scrolling, focus changes, a11y activation, theme/font/folder changes and parse results all notify the pane. A11y and focus need this because their state is not part of the parent's render.
+- **The outline stays a `ListState`** inside its view, so arrow-key navigation still calls `scroll_to_reveal_item`.
+
+### Options considered
+
+| Question | Chosen | Rejected, and why |
+| --- | --- | --- |
+| Number of views | Preview and outline only; editor and chrome stay in the window | **Extract everything now**: the editor carries the input handler, IME, caret and a11y, and is a much larger change. **Keep one view**: every keystroke still rebuilds both expensive panes. |
+| Where the views live | A map on `Prototype` keyed by document id | **Fields on `Document`**: `Document` would need `App` in every test and would mix UI into the parse model. **One shared pane**: loses per-tab scroll and selection. |
+| Parent callbacks | `WeakEntity<Prototype>` in each pane | **Events plus subscriptions**: more plumbing for a single-window app, and the subscriptions would sit beside the views anyway. |
+| Cache style | Relative fill inside a sized wrapper | **Absolute pane sizes**: would not follow window resizes. **Uncached children**: no win, since the parent render still runs. |
+| Cache busting | Explicit `cx.notify` from parse/look/focus/scroll/a11y paths | **Cache the parent too**: the editor has to redraw every keystroke. **Let GPUI infer**: it only invalidates on entity notify or bounds/text-style change, so focus rings and wheel scrolling would freeze. |
+
+### Evidence
+
+- `cargo clippy --workspace --all-targets -- -D warnings` clean; `cargo test --workspace` 140 passed, 1 ignored.
+- `scripts/e2e.ps1`: 44 pass, 4 documented skips, 0 fail, including preview text pattern, preview link keyboard navigation, outline headings, focus order and the last-tab close.
+- `bench.ps1` on 25 Nov 2026 after the split: start 469 ms, 17.8 MB after 10 s, typing 1.8 / 3.0 ms p50/p95, preview 33 ms, program 21.18 MB. All within noise of the previous run.
+- `bench-large.ps1 -Via Messages` at 8 MB (25 Nov 2026): start 507 ms, 149 MB idle, **no frame over 50 ms** in the typing burst or with the preview catching up, preview 812 ms (parse 653 ms). This closes the open 8 MB re-run in `TODO.md`.
+
+### Consequences
+
+- A pane that changes visible state must notify itself or its cached subtree is stale. The new views subscribe to focus and list scrolling, and the window notifies them when AccessKit turns on.
+- The window's render still builds the editor, chrome and status bar; extracting the editor is the remaining item in `TODO.md`.
+- `preview_view` now renders for a `PreviewHost` (the pane), not for `Prototype` directly; any future pane hosting preview blocks implements that one method.
+- An image saved next to a document after the preview was built now appears on the next pane redraw (scroll, edit, theme change) rather than within two seconds: `cached_local_image`'s expiry is only consulted when the pane renders. High-contrast switches do notify both panes, so the system palette still applies immediately.
+
+## 2026-11-25: Fixes from a fresh audit
+
+Context: a read-through of every module, script and workflow found a crash-recovery write-ordering race, two ways preview content disappeared (raw HTML, footnotes containing lists), and a set of smaller correctness, thread and documentation gaps. This entry records the choices where a later reader could reasonably pick differently.
+
+### Decision
+
+- **Raw HTML is shown as text.** `Event::Html` and `Event::InlineHtml` are pushed into the block's runs, and a standalone block becomes a paragraph, so `<div>…</div>` reads as written (never executed). This matches markdown-it's `html: false`.
+- **Frontmatter is a metadata block.** `Kind::Metadata` is rendered like a plain shaded block and is not run through inline rules, so YAML quotes and links are not rewritten.
+- **Footnote ownership is a field.** `Block::footnote: Option<u32>` marks every block of a definition (paragraphs, lists, code, quotes, tables), not only paragraphs. Gathering moves them all; only the last block that can draw runs gets the ↩ backlink. `block_at_line` searches only the body before the appended rule and notes.
+- **One ordered writer thread owns `recovery.json`.** Timer writes and the close flush are queued on a `std::sync::mpsc` channel; the flush carries an acknowledgement the closing thread waits on. FIFO order replaces the old detached tasks, which could rename an older snapshot after a newer one.
+- **Settings and window geometry are written off the UI thread.** Settings saves get a generation and a mutex so a slower older save cannot overwrite a newer one; closing waits for the task. Geometry is flushed synchronously on close so the debounced task cannot be lost with the view.
+- **Opened paths are normalised lexically** with `std::path::absolute` (`. ` and `..` removed); symlinks keep their own spelling. One file is one tab.
+- **Stale temp files are swept once per folder per session**, and only when older than an hour, so an interrupted save cannot accumulate while an in-flight write is safe.
+- **Outline is a virtualised `ListState`.** The arrow keys call `scroll_to_reveal_item`; only visible headings are built.
+- **Formatting stays by hand.** `make fmt` is removed and AGENTS.md says so: the code is deliberately not rustfmt-clean, and CI does not pretend otherwise.
+- **CI compiles the optional grammars.** A second test run uses `--all-features`, so `lang-rust`, `lang-c` and `lang-typescript` cannot rot unnoticed.
+
+### Options considered
+
+| Question | Chosen | Rejected, and why |
+| --- | --- | --- |
+| Raw HTML | Show as text | **Drop it** (before): silent content loss, and unlike markdown-it's `html: false`. **Render it**: the app has no HTML renderer and the privacy rule forbids one. |
+| Frontmatter | Metadata block | **Keep dropping it** (before): the old shell showed it and the project taste lists frontmatter. **Treat it as code**: wrong role and highlighted as a language it is not. |
+| Footnote gathering | Per-block ownership field | **Only `Kind::Footnote`** (before): lists and code stayed inline and references jumped nowhere. **One block per definition**: loses list/code/table rendering. |
+| Recovery ordering | One writer thread with an ordered channel and flush acknowledgement | **Detached tasks plus a generation counter**: a queued task could still be lost when the process exits. **Chain `Task`s and block on close**: the executor handle returned by `Context` has no `block_on` at this GPUI pin, and the pending task would need to be retained and awaited anyway. |
+| Settings writes | Background task with latest-generation gate | **Synchronous** (before): a `sync_all` on the UI thread on every toggle. **Fire and forget**: two quick changes could land out of order. |
+| Path identity | `std::path::absolute` | **`canonicalize`**: resolves symlinks, changes the displayed path, and costs disk access. **Keep raw strings** (before): duplicate tabs and watchers for one file. |
+| Formatting | Hand formatting, no target | **`rustfmt` everywhere**: 510 hunks across all 35 files, noise in every future diff. **Keep `make fmt`**: a target that rewrites the tree is a trap. |
+
+### Evidence
+
+- `cargo clippy --workspace --all-targets -- -D warnings` is clean; `cargo test --workspace` passes 140 tests (1 ignored helper).
+- Probes confirmed the old behaviour before the fix: `blocks("<div>hello</div>")` produced no block; `blocks("Text[^1].\n\n[^1]:\n    - a")` produced no `Kind::Footnote`; `block_at_line` returned the appended footnote for a body line; `find_all("İstanbul", "i")` was empty.
+- New tests cover raw HTML, frontmatter, footnote lists and line mapping, the Kelvin-sign fold, path normalisation, stale-temp sweeping, leading-space request paths, and uppercase link schemes.
+
+### Consequences
+
+- `Block` gains a field and `Kind` a variant; every block constructor and the preview's exhaustive matches carry them.
+- Recovery now has a dedicated thread for the life of the process; it holds only the channel receiver and idle memory is negligible.
+- A close can wait for one settings fsync; this is the same wait the old synchronous write imposed, moved off the typing path.
+- The `--all-features` CI step doubles the test build's grammar compilation; the default release build is unchanged.
+
 ## 2026-11-18: marky.exe carries its own icon
 
 Context: `assets/marky.ico` existed, but only `installer/marky.nsi` used it (`MUI_ICON`). The program had no icon resource: GPUI's `windows-manifest` feature links only `RT_MANIFEST` (its `crates/gpui/resources/windows/gpui.rc` is one line), and the Windows backend never sends `WM_SETICON`. So Explorer, the portable ZIP, Add/Remove Programs (`DisplayIcon` is `$INSTDIR\marky.exe`) and the `.md` association (`DefaultIcon` is `marky.exe,0`) all showed the generic application icon, and the taskbar fell back to the same.

@@ -1,0 +1,11 @@
+[package]
+name = "xtask"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+# `cargo metadata` output; already in the tree through Marky.
+serde_json = "1"
+# The authors and license-file rules the TypeScript generator used; already in the tree.
+regex = "1"

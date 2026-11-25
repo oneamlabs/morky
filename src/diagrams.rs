@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
-use gpui::{App, AppContext, Context, Image, ImageFormat, RenderImage, SvgRenderer};
+use gpui::{App, AppContext, Context, SvgRenderer};
 use merman::{Engine, MermaidConfig, OperationControl, RenderOutput, RenderRequest, Renderer, SvgRequest};
 
 use crate::{bitmaps, perf};
@@ -19,11 +19,7 @@ use crate::{bitmaps, perf};
 const DEADLINE: Duration = Duration::from_secs(5);
 
 /// A diagram as a bitmap (at GPUI's 2× SVG scale) and its natural size in pixels.
-pub struct Diagram {
-    pub image: Arc<RenderImage>,
-    pub width: f32,
-    pub height: f32,
-}
+pub type Diagram = bitmaps::Bitmap;
 
 #[derive(Clone)]
 pub enum State {
@@ -120,10 +116,9 @@ fn render_diagram(renderer: &Renderer, source: &str) -> Result<String, String> {
 
 /// The bitmap GPUI would make for the SVG itself (`Image::to_image_data`), made here so it is ours to drop.
 fn rasterize(svg: String, renderer: &SvgRenderer) -> State {
-    let Some((width, height)) = crate::math::view_box_size(&svg) else { return failed("the diagram has no size") };
-    match Image::from_bytes(ImageFormat::Svg, svg.into_bytes()).to_image_data(renderer.clone()) {
-        Ok(image) => State::Drawn(Arc::new(Diagram { image, width, height })),
-        Err(err) => failed(&format!("could not draw the SVG: {err}")),
+    match bitmaps::rasterize(svg, renderer) {
+        Ok(bitmap) => State::Drawn(Arc::new(bitmap)),
+        Err(err) => failed(&err),
     }
 }
 

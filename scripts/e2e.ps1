@@ -237,6 +237,12 @@ try {
   [E2e.Win]::Type($window, 'body')
   $count = Find-Like '^1 of 1$'
   Write-Check 'find counts matches without case' ([bool]$count)
+  # Editing keys are handled around the source view only; a Backspace in the find field must not
+  # reach the document. A negative check, so a short fixed wait.
+  $beforeBackspace = Editor-Text
+  [E2e.Win]::Key($window, 0x08, 0x0E)
+  Start-Sleep -Milliseconds 300
+  Write-Check 'Backspace in find leaves the document alone' ((Editor-Text) -eq $beforeBackspace)
   [E2e.Win]::Key($window, 0x1B, 0x01)
   Write-Check 'Esc closes find and returns to the editor' ((Wait-Until { -not (Find-Now $T::Group 'Find and replace') -and (Focused-Name) -eq "Edit 'Editor'" } 10) -as [bool]) (Focused-Name)
 
@@ -305,13 +311,16 @@ try {
   Write-Check 'close with unsaved changes is held for the prompt' (-not $app.WaitForExit(2000))
   Stop-ProcessTree $app.Id
 
-  # ----- Run B: a clean window closes at once -----
+  # ----- Run B: File > Close Tab on the only (clean) tab closes the window -----
 
   $app = Start-Marky $fixture
   $window = Window-Of $app
   $ready = Wait-Until { (Title-Of $app) -eq 'fixture.md - Marky' } 30
-  if ($ready) { [E2e.Win]::Close($window) }
-  Write-Check 'clean window closes without a prompt' ($ready -and $app.WaitForExit(10000))
+  if ($ready) {
+    $script:ui = $A::FromHandle($window)
+    Run-Menu 'File' 'Close Tab' | Out-Null
+  }
+  Write-Check 'closing the last tab closes the clean window without a prompt' ($ready -and $app.WaitForExit(10000))
 
   # ----- Run B2: a launch without a file (the Start menu shortcut) opens an untitled tab -----
 

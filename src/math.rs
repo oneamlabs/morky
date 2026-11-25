@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
-use gpui::{App, Image, ImageFormat, RenderImage, SvgRenderer};
+use gpui::{App, SvgRenderer};
 use ratex_layout::{LayoutOptions, layout, to_display_list, validate_layout};
 use ratex_svg::{SvgOptions, render_to_svg};
 use ratex_types::color::Color;
@@ -22,11 +22,7 @@ use crate::{bitmaps, perf};
 const KATEX_SCALE: f32 = 1.21;
 
 /// A formula as a bitmap (at GPUI's 2× SVG scale) and its size in pixels.
-pub struct Formula {
-    pub image: Arc<RenderImage>,
-    pub width: f32,
-    pub height: f32,
-}
+pub type Formula = bitmaps::Bitmap;
 
 type Rendered = Result<Arc<Formula>, Arc<str>>;
 
@@ -106,23 +102,8 @@ fn lay_out(tex: &str, display: bool, em: f32, dark: bool, renderer: &SvgRenderer
     let boxed = layout(&ast, &options);
     validate_layout(&boxed).map_err(Arc::from)?;
     let svg = render_to_svg(&to_display_list(&boxed), &SvgOptions { font_size: em as f64, padding: 1.0, embed_glyphs: true, ..SvgOptions::default() });
-    let (width, height) = view_box_size(&svg).ok_or_else(|| Arc::from("RaTeX returned an SVG without a size"))?;
-    // The bitmap GPUI would make for the SVG itself (`Image::to_image_data`); glyphs are paths, so
-    // no fonts are loaded for it.
-    let image = Image::from_bytes(ImageFormat::Svg, svg.into_bytes()).to_image_data(renderer.clone()).map_err(|err| Arc::from(format!("could not draw the formula: {err}")))?;
-    Ok(Arc::new(Formula { image, width, height }))
-}
-
-/// Width and height from the root `viewBox`, in pixels. Neither SVG we draw has usable `width` and
-/// `height` attributes: RaTeX writes them in points, which would draw a third too large, and merman
-/// writes `width="100%"`.
-pub(crate) fn view_box_size(svg: &str) -> Option<(f32, f32)> {
-    let start = svg.find("viewBox=\"")? + "viewBox=\"".len();
-    let values: Vec<f32> = svg[start..].split('"').next()?.split_whitespace().filter_map(|value| value.parse().ok()).collect();
-    match values.as_slice() {
-        [_, _, width, height] => Some((*width, *height)),
-        _ => None,
-    }
+    let bitmap = bitmaps::rasterize(svg, renderer).map_err(Arc::from)?;
+    Ok(Arc::new(bitmap))
 }
 
 #[cfg(test)]

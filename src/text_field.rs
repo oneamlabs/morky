@@ -15,7 +15,7 @@ use crate::editor::{
     Redo, Right, SelectAll, SelectDocumentEnd, SelectDocumentStart, SelectDown, SelectLeft, SelectLineEnd, SelectLineStart, SelectRight,
     SelectUp, SelectWordLeft, SelectWordRight, Undo, Up, WordLeft, WordRight,
 };
-use crate::preview_view::tone;
+use crate::high_contrast::tone;
 
 pub enum FieldEvent {
     Changed,

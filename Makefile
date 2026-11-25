@@ -7,7 +7,7 @@ FILE ?= scripts/fixtures/typical.md
 VERSION ?=
 
 .DEFAULT_GOAL := help
-.PHONY: all help build run test clippy check fmt notices installer signed-installer portable size e2e bench bench-large bench-flash release clean
+.PHONY: all help build run test clippy check notices installer signed-installer portable size e2e bench bench-large bench-flash release clean
 
 all: build
 
@@ -18,7 +18,6 @@ help:
 	@echo   make test               Run the Rust tests
 	@echo   make clippy             Run clippy with warnings denied
 	@echo   make check              Run clippy and the tests
-	@echo   make fmt                Format the Rust code
 	@echo   make installer          Release build and per-user NSIS installer
 	@echo   make signed-installer   Signed build; needs MARKY_SIGN_COMMAND
 	@echo   make portable           Release build and portable ZIP
@@ -46,11 +45,8 @@ clippy:
 
 check: clippy test
 
-fmt:
-	$(CARGO) fmt --all
-
 notices:
-	npm run notices
+	$(CARGO) run -p xtask -- notices
 
 installer: build
 	$(PWSH) -NoProfile -File scripts/build-installer.ps1

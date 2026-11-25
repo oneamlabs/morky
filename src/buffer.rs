@@ -385,7 +385,9 @@ pub fn find_all(text: &str, query: &str) -> Vec<Range<usize>> {
     if query.is_empty() {
         return Vec::new();
     }
-    if !query.is_ascii() {
+    // Folding a non-ASCII document can turn a character into an ASCII one (K KELVIN SIGN → k), so
+    // the byte-wise fast path is only valid when both sides are ASCII.
+    if !query.is_ascii() || !text.is_ascii() {
         return find_all_unicode(text, &query.to_lowercase());
     }
     let haystack = text.as_bytes();
@@ -610,5 +612,11 @@ mod tests {
         // Every letter folds, as in CodeMirror's search: "CAFÉ" is "café".
         assert_eq!(find_all("café CAFÉ Café", "café"), vec![0..5, 6..11, 12..17]);
         assert!(find_all("abc", "").is_empty());
+    }
+
+    #[test]
+    fn find_all_folds_non_ascii_text_for_an_ascii_query() {
+        // U+212A KELVIN SIGN lowercases to an ASCII k, so the byte-wise path cannot answer this.
+        assert_eq!(find_all("\u{212A}", "k"), vec![0..3]);
     }
 }

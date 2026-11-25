@@ -10,7 +10,7 @@ use std::ops::Range;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use gpui::{FontStyle, FontWeight, HighlightStyle, StrikethroughStyle, px, rgb};
-use pulldown_cmark::{CodeBlockKind, Event, Parser, Tag};
+use pulldown_cmark::{CodeBlockKind, Event, Parser, Tag, TagEnd};
 use tree_sitter::Language;
 use tree_sitter_highlight::{HighlightConfiguration, HighlightEvent, Highlighter};
 
@@ -65,7 +65,7 @@ pub type Span = (Range<usize>, Token);
 
 /// Capture names the grammars' highlight queries use, and the app colour each one gets.
 /// tree-sitter matches the longest listed prefix, so `function.method` uses `function`.
-const CAPTURES: [(&str, Option<Token>); 23] = [
+const CAPTURES: [(&str, Option<Token>); 21] = [
     ("keyword", Some(Token::Keyword)),
     ("operator", None),
     // JSON keys: the app colours them as properties (Lezer's propertyName).
@@ -80,7 +80,6 @@ const CAPTURES: [(&str, Option<Token>); 23] = [
     ("function", Some(Token::Function)),
     ("constructor", Some(Token::Type)),
     ("type", Some(Token::Type)),
-    ("module", Some(Token::Type)),
     ("tag", Some(Token::Type)),
     ("property", Some(Token::Property)),
     ("attribute", Some(Token::Property)),
@@ -89,7 +88,6 @@ const CAPTURES: [(&str, Option<Token>); 23] = [
     ("variable.builtin", Some(Token::Keyword)),
     ("variable", None),
     ("embedded", None),
-    ("text.title", Some(Token::Heading)),
 ];
 
 /// The grammars in this build: one Cargo feature each (see Cargo.toml for their sizes).
@@ -337,6 +335,7 @@ pub fn source_spans(text: &str) -> Vec<Vec<Span>> {
 
     // The preview's options, so both panes agree on what is markup.
     let mut fence: Option<(String, Range<usize>, Option<Range<usize>>)> = None;
+    let mut metadata = false;
     for (event, range) in Parser::new_ext(text, crate::preview::options()).into_offset_iter() {
         match event {
             Event::Start(Tag::Heading { .. }) => add(range, Token::Heading),
@@ -345,7 +344,17 @@ pub fn source_spans(text: &str) -> Vec<Vec<Span>> {
             Event::Start(Tag::Strikethrough) => add(range, Token::Strike),
             Event::Start(Tag::Link { .. }) | Event::Start(Tag::Image { .. }) => add(range, Token::Link),
             Event::Start(Tag::BlockQuote(_)) => add(range, Token::Quote),
-            Event::Start(Tag::MetadataBlock(_)) | Event::Rule => add(range, Token::Muted),
+            Event::Start(Tag::MetadataBlock(_)) => {
+                metadata = true;
+                add(range, Token::Muted);
+            }
+            Event::End(TagEnd::MetadataBlock(_)) => {
+                metadata = false;
+                add(range, Token::Muted);
+            }
+            Event::Rule => add(range, Token::Muted),
+            // Raw HTML is shown as text in the preview, and reads as markup here too.
+            Event::Html(_) | Event::InlineHtml(_) => add(range, Token::Muted),
             Event::Code(_) => add(range, Token::Code),
             Event::Start(Tag::Item) => {
                 let marker = text[range.start..].bytes().take_while(|b| b.is_ascii_digit() || matches!(b, b'-' | b'*' | b'+' | b'.' | b')')).count();
@@ -358,6 +367,7 @@ pub fn source_spans(text: &str) -> Vec<Vec<Span>> {
                 };
                 fence = Some((info, range, None));
             }
+            Event::Text(_) if metadata => add(range, Token::Muted),
             Event::Text(_) if fence.is_some() => {
                 if let Some((_, _, content)) = fence.as_mut() {
                     *content = Some(match content.take() {
