@@ -2657,3 +2657,108 @@ fn caret_origin(layout: &TextLayout, column: usize, next: Option<usize>) -> Opti
     let Some(after) = next.and_then(|next| layout.position_for_index(next)) else { return Some(here) };
     if after.y > here.y { Some(point(layout.bounds().left(), after.y)) } else { Some(here) }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::preview;
+
+    /// The preview's pause is twice the last parse, held inside 30–150 ms: too short and a burst of
+    /// keystrokes parses on every one, too long and the preview lags behind typing.
+    #[test]
+    fn preview_pause_is_twice_the_last_parse_within_bounds() {
+        assert_eq!(parse_pause(0.0), Duration::from_millis(30));
+        assert_eq!(parse_pause(5.0), Duration::from_millis(30));
+        assert_eq!(parse_pause(20.0), Duration::from_millis(40));
+        assert_eq!(parse_pause(75.0), Duration::from_millis(150));
+        assert_eq!(parse_pause(500.0), Duration::from_millis(150));
+    }
+
+    #[test]
+    fn headings_keep_their_line_level_and_text() {
+        let blocks = preview::blocks("# One\n\nText.\n\n### Three\n");
+        let headings = headings_of(&blocks);
+        assert_eq!(headings.len(), 2);
+        assert_eq!((headings[0].line, headings[0].level), (1, 1));
+        assert_eq!(headings[0].text.as_ref(), "One");
+        assert_eq!((headings[1].line, headings[1].level), (5, 3));
+    }
+
+    /// Image runs carry an `image:` destination so the preview can draw them; the arrow keys walk
+    /// links, and an image is not one.
+    #[test]
+    fn links_skip_images_and_keep_document_order() {
+        let blocks = preview::blocks("See [a](one.md) and ![pic](x.png).\n\nThen [b](two.md).\n");
+        let links = links_of(&blocks);
+        assert_eq!(links.iter().map(|(link, _)| link.as_ref()).collect::<Vec<_>>(), ["one.md", "two.md"]);
+        assert_eq!(links.iter().map(|(_, block)| *block).collect::<Vec<_>>(), [0, 1]);
+    }
+
+    #[test]
+    fn links_in_table_cells_are_found() {
+        let blocks = preview::blocks("| Col |\n| --- |\n| [a](cell.md) |\n");
+        assert_eq!(links_of(&blocks).iter().map(|(link, _)| link.as_ref()).collect::<Vec<_>>(), ["cell.md"]);
+    }
+
+    #[test]
+    fn file_name_is_the_last_component() {
+        assert_eq!(file_name(r"C:\docs\notes.md"), "notes.md");
+        assert_eq!(file_name("/home/a/b.txt"), "b.txt");
+        assert_eq!(file_name("bare.md"), "bare.md");
+    }
+
+    /// Windows text input and GPUI speak UTF-16; the buffer counts bytes.
+    #[test]
+    fn utf16_offsets_map_to_byte_offsets() {
+        assert_eq!(utf16_to_byte("abc", 0), 0);
+        assert_eq!(utf16_to_byte("abc", 2), 2);
+        // "é" is one UTF-16 unit but two bytes.
+        assert_eq!(utf16_to_byte("aéb", 2), 1 + 2);
+        // An astral character is a surrogate pair: two units, four bytes.
+        assert_eq!(utf16_to_byte("a😀b", 3), 1 + 4);
+        // Past the end clamps to the length.
+        assert_eq!(utf16_to_byte("abc", 99), 3);
+    }
+
+    /// Freeing a bitmap needs to know every formula and diagram the open documents still show.
+    #[test]
+    fn images_in_use_gathers_formulas_and_diagrams() {
+        let blocks = preview::blocks("```math\nE=mc^2\n```\n\n```mermaid\nflowchart LR\n  A-->B\n```\n\nInline $x+1$ and `$not math$`.\n");
+        let images = ImagesInUse::of(&blocks);
+        assert!(images.formulas.contains(&("E=mc^2".to_string(), true)));
+        assert!(images.formulas.contains(&("x+1".to_string(), false)));
+        assert_eq!(images.diagrams.len(), 1);
+        // Inline code is not a formula.
+        assert!(!images.formulas.iter().any(|(tex, _)| tex.contains("not math")));
+    }
+
+    #[test]
+    fn images_in_use_finds_formulas_in_table_cells() {
+        let blocks = preview::blocks("| Math |\n| --- |\n| $y$ |\n");
+        assert!(ImagesInUse::of(&blocks).formulas.contains(&("y".to_string(), false)));
+    }
+
+    /// The status bar reports words as `/\S+/g` and characters as JavaScript's `length`, both of
+    /// which the app did in JavaScript.
+    #[test]
+    fn counts_are_words_and_utf16_characters() {
+        let counts = Counts::of("one two  three\n");
+        assert_eq!(counts.words, 3);
+        assert_eq!(counts.chars, 15);
+        // An astral character counts as two, as JavaScript's length does.
+        assert_eq!(Counts::of("😀").chars, 2);
+        assert_eq!(Counts::of("").words, 0);
+    }
+
+    /// A `Block` is the only input these helpers need; make sure they tolerate the shapes a parse
+    /// can produce (no blocks at all, and a block with no runs).
+    #[test]
+    fn helpers_tolerate_empty_blocks() {
+        let blocks: Vec<Block> = Vec::new();
+        assert!(headings_of(&blocks).is_empty());
+        assert!(links_of(&blocks).is_empty());
+        assert!(ImagesInUse::of(&blocks).formulas.is_empty());
+        let no_runs = Block { kind: Kind::Paragraph, text: String::new(), runs: Vec::new(), line: 1, table: None, code: None, src: None };
+        assert!(links_of(std::slice::from_ref(&no_runs)).is_empty());
+    }
+}
