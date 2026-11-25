@@ -24,13 +24,9 @@ pub struct Document {
     pub(super) blocks: Arc<Vec<Block>>,
     /// The formulas and diagrams in `blocks`, gathered by the parse: freeing unused images reads these.
     pub(super) images: Arc<ImagesInUse>,
-    /// The preview's links and the outline's headings, gathered from `blocks` by the parse, so
-    /// drawing a frame does not walk every block.
-    pub(super) links: Vec<(Arc<str>, usize)>,
+    /// The outline's headings, gathered from `blocks` by the parse, so drawing a frame does not
+    /// walk every block. The preview keeps its own link list.
     pub(super) headings: Vec<Heading>,
-    /// One item per heading, so the outline draws only what is on screen and can scroll to the
-    /// heading the arrow keys select.
-    pub(super) outline: ListState,
     /// Syntax colours per source line, from the last background parse.
     pub(super) spans: Vec<Vec<Span>>,
     /// The longest line in characters, from the last parse: the width to scroll to when word wrap is off.
@@ -41,8 +37,6 @@ pub struct Document {
     pub(super) edited_at: Option<Instant>,
     /// One item per source line.
     pub(super) lines: ListState,
-    /// One item per preview block.
-    pub(super) block_list: ListState,
     pub(super) followed_cursor_line: Option<usize>,
     pub(super) synced_source_line: Option<usize>,
     /// Words and UTF-16 characters, counted with each background parse, for the status bar.
@@ -61,6 +55,7 @@ pub struct Document {
 }
 
 /// A heading for the outline: its 1-based source line, level and text.
+#[derive(Clone, Debug, PartialEq)]
 pub(super) struct Heading {
     pub(super) line: usize,
     pub(super) level: u8,
@@ -175,16 +170,13 @@ impl Document {
             marked: None,
             blocks: Arc::default(),
             images: Arc::default(),
-            links: Vec::new(),
             headings: Vec::new(),
-            outline: ListState::new(0, ListAlignment::Top, px(OVERDRAW)),
             spans: Vec::new(),
             longest_line: 0,
             parse_task: None,
             last_parse_ms: 0.,
             edited_at: None,
             lines,
-            block_list: ListState::new(0, ListAlignment::Top, px(OVERDRAW)),
             followed_cursor_line: None,
             synced_source_line: None,
             counts: Counts::default(),

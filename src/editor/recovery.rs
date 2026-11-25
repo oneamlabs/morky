@@ -107,6 +107,7 @@ impl Prototype {
                     let mut document = Document::open(opened, id, cx);
                     document.restored = true;
                     self.tabs.push(document);
+                    self.open_views(id, cx);
                     self.schedule_parse(id, Duration::ZERO, cx);
                     self.watch_document(id, cx);
                 }

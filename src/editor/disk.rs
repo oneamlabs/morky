@@ -78,6 +78,10 @@ impl Prototype {
                 self.record_recent(&target, cx);
                 if moved {
                     self.watch_document(id, cx);
+                    let folder = target.parent().map(Path::to_path_buf);
+                    if let Some(views) = self.views.get(&id) {
+                        views.preview.update(cx, |pane, cx| pane.set_folder(folder, cx));
+                    }
                 }
             }
             Err(err) => self.report(format!("Could not save {}: {err}", target.display())),
@@ -122,6 +126,7 @@ impl Prototype {
                 let id = self.tabs.take_id();
                 let document = Document::open(opened, id, cx);
                 self.tabs.push(document);
+                self.open_views(id, cx);
                 self.schedule_parse(id, Duration::ZERO, cx);
                 self.watch_document(id, cx);
                 self.record_recent(path, cx);
@@ -135,6 +140,7 @@ impl Prototype {
         let id = self.tabs.take_id();
         let opened = OpenedFile::untitled(self.settings.new_file_line_ending);
         self.tabs.push(Document::open(opened, id, cx));
+        self.open_views(id, cx);
         self.schedule_parse(id, Duration::ZERO, cx);
         self.activate_tab(self.tabs.len() - 1, cx);
         self.status = None;
@@ -257,7 +263,10 @@ impl Prototype {
     pub(super) fn reload_document(&mut self, id: u64, opened: OpenedFile, cx: &mut Context<Self>) {
         let Some(index) = self.document_index(id) else { return };
         self.tabs.documents_mut()[index] = Document::open(opened, id, cx);
-        self.preview_link = None;
+        if let Some(views) = self.views.get(&id) {
+            views.preview.update(cx, |pane, cx| pane.clear(cx));
+            views.outline.update(cx, |pane, cx| pane.set_headings(Vec::new(), cx));
+        }
         self.schedule_parse(id, Duration::ZERO, cx);
         self.watch_document(id, cx);
         self.release_unused_images(cx);

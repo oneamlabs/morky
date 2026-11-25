@@ -1,45 +1,19 @@
-//! Following a link in the preview, with the app's rules, and the link list the arrow keys walk.
+//! Following a link out of the preview, with the app's rules.
 //!
-//! Web and mail links open in the default program; a footnote reference scrolls the preview to its
-//! footnote; a relative link opens a `.md`, `.markdown` or `.txt` file next to this one as a tab.
-//! The preview never navigates, so no link can replace the document.
+//! In-preview destinations (`#fn:`, `#fnref:` and other `#anchors`) are handled by the preview pane;
+//! web and mail links open in the default program, and a relative link opens a `.md`, `.markdown`
+//! or `.txt` file as a tab. The preview never navigates, so no link can replace the document.
 
 use super::*;
 
 impl Prototype {
-    /// Every link the preview draws, in document order, with the block it is in. The preview is one
-    /// tab stop; the left and right arrows move through this list and Enter follows the chosen link.
-    pub(super) fn preview_links(&self) -> &[(Arc<str>, usize)] {
-        &self.doc().links
-    }
-
-    /// A click on a link in the preview, with the app's rules (`followLink`).
+    /// A link the preview passed on because it does not stay inside the pane.
     pub fn follow_link(&mut self, link: &str, _window: &mut Window, cx: &mut Context<Self>) {
         if opens_outside(link) {
             cx.open_url(link);
             return;
         }
-        if let Some(number) = link.strip_prefix("#fn:").and_then(|number| number.parse::<u32>().ok()) {
-            let doc = self.doc();
-            if let Some(index) = doc.blocks.iter().position(|block| block.footnote == Some(number)) {
-                doc.block_list.scroll_to(ListOffset { item_ix: index, offset_in_item: px(0.) });
-                cx.notify();
-            }
-            return;
-        }
-        // A footnote's ↩ scrolls back to the block that refers to it.
-        if let Some(number) = link.strip_prefix("#fnref:") {
-            let target = format!("#fn:{number}");
-            let doc = self.doc();
-            let refers = |runs: &[preview::Run]| runs.iter().any(|run| run.style.link.as_deref() == Some(target.as_str()));
-            let found = doc.blocks.iter().position(|block| refers(&block.runs) || block.table.as_ref().is_some_and(|table| table.rows.iter().flatten().any(|cell| refers(cell))));
-            if let Some(index) = found {
-                doc.block_list.scroll_to(ListOffset { item_ix: index, offset_in_item: px(0.) });
-                cx.notify();
-            }
-            return;
-        }
-        // The app gives headings no ids, so other #anchors go nowhere, as there.
+        // Every in-preview anchor is handled by the pane; this is a guard against a missed one.
         if link.starts_with('#') {
             return;
         }

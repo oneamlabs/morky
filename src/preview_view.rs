@@ -7,9 +7,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use gpui::{AppContext, ClickEvent, Context, FontWeight, IntoElement, Pixels, Role, SharedString, StyledText, SvgRenderer, div, img, prelude::*, px};
+use gpui::{AppContext, ClickEvent, Context, FontWeight, IntoElement, Pixels, Role, SharedString, StyledText, SvgRenderer, Window, div, img, prelude::*, px};
 
-use crate::editor::{self, Prototype};
+use crate::editor;
 use crate::high_contrast::tone;
 use crate::{diagrams, math};
 use crate::preview::{self, Align, Block, Kind, Run, Table};
@@ -43,9 +43,14 @@ impl Look {
     }
 }
 
+/// What a preview pane must do when a link is clicked, so blocks can be drawn for any view.
+pub trait PreviewHost: Sized + 'static {
+    fn follow_preview_link(&mut self, link: &str, window: &mut Window, cx: &mut Context<Self>);
+}
+
 /// One list item: the block with the pane's side padding, and the top padding on the first block.
 /// Each block is a node for assistive technology with its role and its text, as the app's HTML is.
-pub fn preview_item(block: &Block, index: usize, look: &Look, cx: &mut Context<Prototype>) -> gpui::AnyElement {
+pub fn preview_item<V: PreviewHost>(block: &Block, index: usize, look: &Look, cx: &mut Context<V>) -> gpui::AnyElement {
     div()
         .id(("block", index))
         .role(block_role(block.kind))
@@ -97,7 +102,7 @@ pub fn block_label(block: &Block) -> String {
     }
 }
 
-fn preview_block(block: &Block, look: &Look, cx: &mut Context<Prototype>) -> gpui::Div {
+fn preview_block<V: PreviewHost>(block: &Block, look: &Look, cx: &mut Context<V>) -> gpui::Div {
     let dark = look.dark;
     let font_size = look.font_size;
     let size = match block.kind {
@@ -200,7 +205,7 @@ fn math_block(tex: &str, look: &Look) -> gpui::Div {
 /// A Mermaid diagram, centred and never wider than drawn, like the app's (`width="100%"` with a
 /// `max-width`): it shrinks with the pane and keeps its shape. While the helper draws it, its
 /// source shows in its place; a broken diagram shows the error as the app does (`.mermaid-error`).
-fn diagram_block(source: &str, look: &Look, cx: &mut Context<Prototype>) -> gpui::Div {
+fn diagram_block<V: 'static>(source: &str, look: &Look, cx: &mut Context<V>) -> gpui::Div {
     match diagrams::state(source, look.dark, cx) {
         // The box keeps the shape: given only a relative width, GPUI's img takes the image's own
         // height, so a shrunk diagram would float in a box as tall as the unshrunk one.
@@ -310,7 +315,7 @@ pub fn local_image(source: &str, folder: Option<&Path>) -> Option<PathBuf> {
 
 /// The app's table: 1px borders, 6px 12px cell padding, a bold header row and shaded even body rows.
 /// Columns get widths in proportion to their longest cell, so they line up across rows like an auto table.
-fn table_block(table: &Table, look: &Look, cx: &mut Context<Prototype>) -> gpui::Div {
+fn table_block<V: PreviewHost>(table: &Table, look: &Look, cx: &mut Context<V>) -> gpui::Div {
     let columns = table.rows.iter().map(Vec::len).max().unwrap_or(0).max(table.align.len());
     let weights: Vec<f32> = (0..columns)
         .map(|column| {
@@ -355,7 +360,7 @@ fn table_block(table: &Table, look: &Look, cx: &mut Context<Prototype>) -> gpui:
     div().mb_3().w_full().flex().flex_col().border_t_1().border_l_1().border_color(look.border()).children(rows)
 }
 
-fn styled_runs(runs: &[Run], size: Pixels, look: &Look, cx: &mut Context<Prototype>) -> gpui::Div {
+fn styled_runs<V: PreviewHost>(runs: &[Run], size: Pixels, look: &Look, cx: &mut Context<V>) -> gpui::Div {
     let count = runs.len();
     // Each piece is a box in a wrapping row, and a box wraps whole. So when a paragraph has more than
     // one piece (styles, links, formulas, images), plain text goes in word by word and flows like
@@ -400,7 +405,7 @@ fn inline_image(run: &Run, source: &str, look: &Look) -> gpui::Div {
 /// One run of text, or one word of it (`word`), with the run's style. Links and abbreviations are
 /// nodes of their own for assistive technology; `index` keeps their ids apart within the block.
 #[allow(clippy::too_many_arguments)]
-fn styled_piece(text: &str, run: &Run, size: Pixels, look: &Look, word: Option<usize>, index: usize, cx: &mut Context<Prototype>) -> gpui::AnyElement {
+fn styled_piece<V: PreviewHost>(text: &str, run: &Run, size: Pixels, look: &Look, word: Option<usize>, index: usize, cx: &mut Context<V>) -> gpui::AnyElement {
     let dark = look.dark;
     let style = &run.style;
     // Sub- and superscript are smaller and shifted, like the app's 80% and ±0.3em.
@@ -446,7 +451,7 @@ fn styled_piece(text: &str, run: &Run, size: Pixels, look: &Look, word: Option<u
 /// its links, so a long document does not fill the Tab order; `selected` draws the same ring a
 /// focused control gets. Clicks, Enter and a screen reader's "click" go to `Prototype::follow_link`,
 /// which applies the app's rules.
-fn clickable(piece: gpui::Stateful<gpui::Div>, text: &str, link: Arc<str>, selected: bool, dark: bool, cx: &mut Context<Prototype>) -> gpui::Stateful<gpui::Div> {
+fn clickable<V: PreviewHost>(piece: gpui::Stateful<gpui::Div>, text: &str, link: Arc<str>, selected: bool, dark: bool, cx: &mut Context<V>) -> gpui::Stateful<gpui::Div> {
     let ring = editor::ring(dark);
     piece
         .role(Role::Link)
@@ -457,7 +462,7 @@ fn clickable(piece: gpui::Stateful<gpui::Div>, text: &str, link: Arc<str>, selec
         .text_color(tone(dark, 0x58a6ff, 0x0969da))
         .underline()
         .cursor_pointer()
-        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.follow_link(&link, window, cx)))
+        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.follow_preview_link(&link, window, cx)))
 }
 
 /// An abbreviation, underlined, with its title on hover and for screen readers (the app's `<abbr title>`).

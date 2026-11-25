@@ -6,27 +6,31 @@ use super::*;
 
 impl Prototype {
     /// The caret stays visible, and the preview shows the block for the top visible source line.
-    pub(super) fn sync_scroll(&mut self) {
+    pub(super) fn sync_scroll(&mut self, cx: &mut Context<Self>) {
         let show_editor = self.settings.show_editor;
         let show_preview = self.settings.preview_visible();
-        let doc = self.doc_mut();
-        let cursor_line = doc.buffer.line_of(doc.cursor());
-        if doc.followed_cursor_line != Some(cursor_line) {
-            doc.followed_cursor_line = Some(cursor_line);
-            if show_editor {
-                doc.lines.scroll_to_reveal_item(cursor_line);
+        let (id, block) = {
+            let doc = self.doc_mut();
+            let cursor_line = doc.buffer.line_of(doc.cursor());
+            if doc.followed_cursor_line != Some(cursor_line) {
+                doc.followed_cursor_line = Some(cursor_line);
+                if show_editor {
+                    doc.lines.scroll_to_reveal_item(cursor_line);
+                }
             }
+            if !show_editor || !show_preview || doc.blocks.is_empty() {
+                return;
+            }
+            let top = doc.lines.logical_scroll_top().item_ix;
+            if doc.synced_source_line == Some(top) {
+                return;
+            }
+            doc.synced_source_line = Some(top);
+            (doc.id, preview::block_at_line(&doc.blocks, top + 1))
+        };
+        if let Some(views) = self.views.get(&id) {
+            views.preview.update(cx, |pane, cx| pane.scroll_to_block(block, cx));
         }
-        if !show_editor || !show_preview || doc.blocks.is_empty() {
-            return;
-        }
-        let top = doc.lines.logical_scroll_top().item_ix;
-        if doc.synced_source_line == Some(top) {
-            return;
-        }
-        doc.synced_source_line = Some(top);
-        let block = preview::block_at_line(&doc.blocks, top + 1);
-        doc.block_list.scroll_to(ListOffset { item_ix: block, offset_in_item: px(0.) });
     }
 
     /// With word wrap off, keeps the caret in view sideways after it moves. The caret's bounds are
@@ -58,26 +62,6 @@ impl Prototype {
         }
         self.h_scroll.set_offset(offset);
         true
-    }
-
-    /// The preview's text as one read-only AccessKit text pattern, capped like the editor's so a
-    /// large document does not build a tree the size of its text on every frame.
-    pub(super) fn preview_described(&self, window: &Window) -> Option<Vec<a11y::Line>> {
-        if !window.is_a11y_active() {
-            return None;
-        }
-        let lines: Vec<a11y::Line> = self
-            .doc()
-            .blocks
-            .iter()
-            .enumerate()
-            .take(a11y::LINES_DESCRIBED)
-            .map(|(index, block)| a11y::Line { index, text: preview_view::block_label(block), bounds: None, positions: None, widths: None })
-            .filter(|line| !line.text.is_empty())
-            .collect();
-        let mut lines = a11y::within_budget(lines, &[]);
-        a11y::end_lines(&mut lines);
-        Some(lines)
     }
 
     /// One source line, laid out only when the list needs it. Syntax colours, find matches and the
@@ -427,68 +411,6 @@ impl Prototype {
             ))
     }
 
-    pub(super) fn preview_column(&mut self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let dark = self.dark;
-        let blocks = self.doc().block_list.clone();
-        let focused_ring = chrome::ring(dark);
-        if self.preview_link.is_some_and(|index| index >= self.preview_links().len()) {
-            self.preview_link = None;
-        }
-        let selected = self.preview_link.and_then(|index| self.preview_links().get(index)).map(|(link, _)| link.clone());
-        let preview_label = match &selected {
-            Some(link) => SharedString::from(format!("Preview, link {link}")),
-            None => SharedString::from("Preview"),
-        };
-        let described = self.preview_described(window);
-        self.preview_keys(
-            div()
-                .id("preview")
-                .key_context("Preview")
-                .track_focus(&self.preview_focus)
-                .role(gpui::Role::Document)
-                .aria_label(preview_label)
-                .a11y_synthetic_children(move |builder| {
-                    if let Some(lines) = &described {
-                        a11y::describe_document(builder, lines);
-                    }
-                })
-                .border_1()
-                .border_color(gpui::transparent_black())
-                .focus_visible(move |style| style.border_color(focused_ring)),
-            cx,
-        )
-            .flex_1()
-            .min_w(px(0.))
-            .h_full()
-            .bg(tone(dark, 0x09090b, 0xffffff))
-            .text_color(tone(dark, 0xfafafa, 0x18181b))
-            .child(
-                list(
-                    blocks,
-                    cx.processor(move |this, ix, window, cx| {
-                        let folder = Path::new(&this.doc().path).parent().map(Path::to_path_buf);
-                        let look = Look {
-                            font_size: this.settings.font_size,
-                            dark: this.dark,
-                            mono: this.mono.clone(),
-                            folder,
-                            svg: cx.svg_renderer(),
-                            selected_link: selected.clone(),
-                        };
-                        let item = match this.doc().blocks.get(ix) {
-                            Some(block) => preview_view::preview_item(block, ix, &look, cx),
-                            None => div().into_any_element(),
-                        };
-                        // A formula over this frame's layout budget is drawn in the next one.
-                        if math::take_deferred() {
-                            window.request_animation_frame();
-                        }
-                        item
-                    }),
-                )
-                .size_full(),
-            )
-    }
 }
 
 

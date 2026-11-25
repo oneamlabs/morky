@@ -34,9 +34,11 @@ impl Prototype {
     }
 
     fn remove_tab(&mut self, index: usize, cx: &mut Context<Self>) {
+        let id = self.tabs.documents()[index].id;
         if !self.tabs.remove(index) {
             return;
         }
+        self.views.remove(&id);
         self.doc_mut().synced_source_line = None;
         self.release_unused_images(cx);
         cx.notify();

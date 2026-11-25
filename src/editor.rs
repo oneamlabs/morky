@@ -6,7 +6,7 @@
 //! preview is re-parsed on a background thread once typing pauses, as in the app.
 
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::ops::Range;
@@ -16,8 +16,8 @@ use std::time::{Duration, Instant};
 use gpui::{
     AnyElement, App, Bounds, ClipboardItem, Context, Entity, EntityInputHandler, FocusHandle, Focusable, HighlightStyle,
     ExternalPaths, IntoElement, ListAlignment, ListOffset, ListScrollEvent, ListState, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollHandle,
-    PromptLevel, SharedString, StyledText, Subscription, Task, TextAlign, TextLayout, TextRun, UTF16Selection, Window, WindowBounds, actions, canvas,
-    deferred, div, fill, list, point, prelude::*, px, rgb, size, svg,
+    PromptLevel, SharedString, StyledText, Subscription, Task, TextAlign, TextLayout, TextRun, UTF16Selection, Window, WindowBounds,
+    actions, canvas, deferred, div, fill, list, point, prelude::*, px, relative, rgb, size, svg,
 };
 
 use crate::allowlist;
@@ -26,7 +26,7 @@ use crate::{diagrams, diagnostics, instance, math, store, watcher};
 use crate::files::{self, FileMeta, OpenedFile};
 use crate::perf;
 use crate::preview::{self, Block, Kind};
-use crate::preview_view::{self, Look};
+use crate::preview_view;
 use crate::high_contrast::tone;
 use crate::settings::{self, ViewSettings};
 use crate::syntax::{self, Span};
@@ -90,6 +90,8 @@ mod find;
 mod input;
 mod links;
 mod lists;
+mod outline_pane;
+mod preview_pane;
 mod recovery;
 mod tabs;
 mod window;
@@ -98,6 +100,8 @@ pub use chrome::*;
 pub use document::Document;
 use document::{file_name, headings_of, links_of, Counts, ImagesInUse, Parsed};
 use drag::Drag;
+use outline_pane::OutlinePane;
+use preview_pane::PreviewPane;
 use recovery::Recovery;
 use tabs::Tabs;
 
@@ -125,11 +129,27 @@ fn parse_pause(last_parse_ms: f64) -> Duration {
     Duration::from_secs_f64((last_parse_ms * 2.0).clamp(30.0, 150.0) / 1000.0)
 }
 
+/// The layout a cached pane fills. Cached views are not measured from their contents, so the size
+/// has to be supplied; a relative fill resolves against the pane's wrapper.
+fn fill_style() -> gpui::StyleRefinement {
+    let mut style = gpui::StyleRefinement::default();
+    style.size.width = Some(relative(1.0).into());
+    style.size.height = Some(relative(1.0).into());
+    style
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum OpenMenu {
     File,
     Edit,
     View,
+}
+
+/// The cached views of one document. Kept beside `Tabs` rather than inside `Document`, which stays
+/// free of GPUI entities so its tests need no window.
+struct TabViews {
+    preview: Entity<PreviewPane>,
+    outline: Entity<OutlinePane>,
 }
 
 struct FindBar {
@@ -179,12 +199,10 @@ pub struct Prototype {
     menu_focus: Vec<FocusHandle>,
     /// The open menu itself, focused when it was opened with the mouse, so the arrows work without an item highlighted.
     menu_root: FocusHandle,
-    /// The outline is one tab stop; the arrows move this highlight through its headings.
-    outline_focus: FocusHandle,
-    outline_cursor: Option<usize>,
-    preview_focus: FocusHandle,
-    /// The preview is one tab stop; the left and right arrows select one of its links.
-    preview_link: Option<usize>,
+    /// The preview and outline views of each open document, keyed by document id.
+    views: HashMap<u64, TabViews>,
+    /// Whether AccessKit was active last frame, so a change can invalidate the cached panes.
+    a11y_active: bool,
     /// Lines laid out this frame, shared with the accessibility callback, which needs their bounds
     /// after prepaint to give each text run a rectangle a screen magnifier can follow.
     prepaint_lines: Rc<RefCell<Vec<(usize, TextLayout)>>>,
@@ -264,10 +282,8 @@ impl Prototype {
             char_width: px(9.),
             menu_focus: (0..MENU_ITEMS).map(|_| cx.focus_handle()).collect(),
             menu_root: cx.focus_handle(),
-            outline_focus: cx.focus_handle().tab_stop(true),
-            outline_cursor: None,
-            preview_focus: cx.focus_handle().tab_stop(true),
-            preview_link: None,
+            views: HashMap::new(),
+            a11y_active: false,
             prepaint_lines: Rc::new(RefCell::new(Vec::new())),
             settings_focus: cx.focus_handle(),
             settings_controls: (0..chrome::settings_slot::COUNT).map(|_| cx.focus_handle()).collect(),
@@ -290,6 +306,7 @@ impl Prototype {
         if !this.settings.can_save() {
             this.report("Settings could not be read; changes will not be saved".to_string());
         }
+        this.open_views(0, cx);
         // The source paints first; the preview follows when the background parse is done, like the app.
         this.schedule_parse(0, Duration::ZERO, cx);
         this.watch_document(0, cx);
@@ -306,6 +323,70 @@ impl Prototype {
 
     fn doc_mut(&mut self) -> &mut Document {
         self.tabs.active_doc_mut()
+    }
+
+    /// Creates the preview and outline views for a document that has just opened.
+    fn open_views(&mut self, id: u64, cx: &mut Context<Self>) {
+        let Some(doc) = self.tabs.iter().find(|doc| doc.id == id) else { return };
+        let folder = Path::new(&doc.path).parent().map(Path::to_path_buf);
+        let app = cx.entity().downgrade();
+        let (font_size, dark, mono) = (self.settings.font_size, self.dark, self.mono.clone());
+        let preview = cx.new(|cx| PreviewPane::new(app.clone(), font_size, dark, mono, folder, cx));
+        let outline = cx.new(|cx| OutlinePane::new(dark, app, cx));
+        self.views.insert(id, TabViews { preview, outline });
+    }
+
+    fn active_views(&self) -> Option<&TabViews> {
+        self.views.get(&self.tabs.active_doc().id)
+    }
+
+    /// The active document's preview, filling the flex row. Cached until the pane is notified.
+    fn preview_area(&mut self, _cx: &mut Context<Self>) -> AnyElement {
+        let Some(views) = self.active_views() else { return div().flex_1().into_any_element() };
+        let preview = views.preview.clone();
+        div().flex_1().min_w(px(0.)).h_full().child(preview.cached(fill_style())).into_any_element()
+    }
+
+    /// The active document's outline, at its fixed width. Cached until headings or the caret's
+    /// heading change.
+    fn outline_area(&mut self, _cx: &mut Context<Self>) -> AnyElement {
+        let Some(views) = self.active_views() else { return div().w(px(220.)).into_any_element() };
+        let outline = views.outline.clone();
+        div().w(px(220.)).h_full().child(outline.cached(fill_style())).into_any_element()
+    }
+
+    /// Applies a font-size or theme change to every pane.
+    fn update_view_looks(&mut self, cx: &mut Context<Self>) {
+        let (font_size, dark, mono) = (self.settings.font_size, self.dark, self.mono.clone());
+        for views in self.views.values() {
+            views.preview.update(cx, |pane, cx| pane.set_look(font_size, dark, mono.clone(), cx));
+            views.outline.update(cx, |pane, cx| pane.set_dark(dark, cx));
+        }
+    }
+
+    /// Feeds the outline the heading under the caret, notifying it only when that heading changes.
+    fn sync_outline_current(&mut self, cx: &mut Context<Self>) {
+        let current = self.heading_at_caret();
+        let Some(views) = self.active_views() else { return };
+        views.outline.update(cx, |pane, cx| pane.set_current(current, cx));
+    }
+
+    /// A cached pane keeps the tree it built before AccessKit started listening; a change in that
+    /// state has to bust both caches, or the preview loses its text pattern.
+    fn refresh_views_for_a11y(&mut self, window: &Window, cx: &mut Context<Self>) {
+        let active = window.is_a11y_active();
+        if active == self.a11y_active {
+            return;
+        }
+        self.a11y_active = active;
+        self.notify_views(cx);
+    }
+
+    fn notify_views(&mut self, cx: &mut Context<Self>) {
+        for views in self.views.values() {
+            views.preview.update(cx, |_, cx| cx.notify());
+            views.outline.update(cx, |_, cx| cx.notify());
+        }
     }
 
     fn report(&mut self, message: String) {
@@ -376,7 +457,6 @@ impl Prototype {
         if !self.tabs.activate(index) {
             return;
         }
-        self.preview_link = None;
         self.doc_mut().synced_source_line = None;
         cx.notify();
     }
@@ -402,6 +482,7 @@ impl Prototype {
         self.settings.font_size = settings::FONT_SIZES[next as usize];
         // Formulas are laid out per font size, so the old size's bitmaps are no longer drawn.
         self.release_unused_images(cx);
+        self.update_view_looks(cx);
         self.keep_settings(cx);
     }
 
@@ -419,21 +500,26 @@ impl Render for Prototype {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.frame_started = Some(Instant::now());
         math::begin_frame();
-        crate::high_contrast::refresh_periodically();
         if !self.logged_first_frame {
             perf::mark("render");
         }
+        if crate::high_contrast::refresh_periodically() {
+            self.notify_views(cx);
+        }
+        self.refresh_views_for_a11y(window, cx);
         let dark = self.settings.is_dark(window.appearance());
         if dark != self.dark {
             self.dark = dark;
             self.release_unused_images(cx);
+            self.update_view_looks(cx);
         }
         self.caret_bounds = None;
         self.painted_lines.clear();
         self.prepaint_lines.borrow_mut().clear();
         self.update_title(window);
         self.refresh_matches(cx);
-        self.sync_scroll();
+        self.sync_scroll(cx);
+        self.sync_outline_current(cx);
         if !self.settings.word_wrap {
             let font = gpui::font(self.mono.clone());
             let font_id = window.text_system().resolve_font(&font);
@@ -455,9 +541,9 @@ impl Render for Prototype {
             .flex_1()
             .min_h_0()
             .on_mouse_down(MouseButton::Left, cx.listener(Self::close_menu))
-            .when(show_outline, |row| row.child(self.outline_column(cx)))
+            .when(show_outline, |row| row.child(self.outline_area(cx)))
             .when(show_editor, |row| row.child(self.editor_column(window, cx)))
-            .when(show_preview, |row| row.child(self.preview_column(window, cx)))
+            .when(show_preview, |row| row.child(self.preview_area(cx)))
             .when(self.recent_open, |row| row.child(self.recent_panel(cx)))
             .when(self.settings_open, |row| row.child(self.settings_panel(cx)));
         let find_bar = self.find_bar(cx);

@@ -385,99 +385,11 @@ impl Prototype {
 
     // ----- Outline -----
 
-    /// The headings of the document, with the one the caret is under highlighted, as in the app
-    /// (`outline.ts` follows the caret, not the scroll position). The list is one tab stop; the
-    /// arrows move through it and Enter jumps, so a long outline does not fill the Tab order.
-    pub fn outline_column(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let dark = self.dark;
-        let current = self.heading_at_caret();
-        let count = self.doc().headings.len();
-        let selected = self.outline_cursor.filter(|index| *index < count).or(current);
-        let cursor_active = self.outline_cursor.is_some();
-        let column = focus_ring(
-            div()
-                .id("outline")
-                .key_context("Outline")
-                .track_focus(&self.outline_focus)
-                .role(Role::List)
-                .aria_label("Outline")
-                .w(px(220.))
-                .h_full()
-                .bg(tone(dark, 0x18181b, 0xf4f4f5))
-                .px_2()
-                .py_2()
-                .text_size(px(13.))
-                .on_action(cx.listener(|this, _: &OutlineNext, _, cx| this.outline_step(1, cx)))
-                .on_action(cx.listener(|this, _: &OutlinePrevious, _, cx| this.outline_step(-1, cx)))
-                .on_action(cx.listener(|this, _: &OutlineOpen, window, cx| this.outline_open(window, cx))),
-            dark,
-        );
-        if count == 0 {
-            return column.child(div().text_color(quiet(dark)).child("No headings"));
-        }
-        let state = self.doc().outline.clone();
-        column.child(
-            list(
-                state,
-                cx.processor(move |this: &mut Prototype, index, _window, cx| {
-                    let Some(heading): Option<&super::document::Heading> = this.doc().headings.get(index) else {
-                        return div().into_any_element();
-                    };
-                    let (line, level, text) = (heading.line, heading.level, heading.text.clone());
-                    let is_current = Some(index) == current;
-                    let is_selected = Some(index) == selected;
-                    div()
-                        .id(("heading", index))
-                        .role(Role::ListItem)
-                        .aria_label(text.clone())
-                        .aria_level(level as usize)
-                        .aria_position_in_set(index + 1)
-                        .aria_size_of_set(count)
-                        .aria_selected(is_selected)
-                        .when(is_selected, |item| item.aria_active_descendant())
-                        .py_1()
-                        .pl(px(4. + (level.saturating_sub(1) as f32) * 12.))
-                        .when(is_current, |item| item.text_color(ring(dark)).font_weight(gpui::FontWeight::BOLD))
-                        .when(is_selected && cursor_active, |item| item.bg(tone(dark, 0x27272a, 0xe4e4e7)))
-                        .cursor_pointer()
-                        .child(text)
-                        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                            this.jump_to_line(line, cx);
-                            this.outline_cursor = None;
-                            this.focus_editor(window, cx);
-                        }))
-                        .into_any_element()
-                }),
-            )
-            .h_full(),
-        )
-    }
-
-    /// The last heading at or above the caret: the one the outline highlights.
-    fn heading_at_caret(&self) -> Option<usize> {
+    /// The last heading at or above the caret: the one the outline highlights. The outline itself
+    /// is `OutlinePane`.
+    pub(super) fn heading_at_caret(&self) -> Option<usize> {
         let caret_line = self.doc().buffer.line_of(self.doc().cursor()) + 1;
         self.doc().headings.iter().rposition(|heading| heading.line <= caret_line)
-    }
-
-    fn outline_step(&mut self, delta: isize, cx: &mut Context<Self>) {
-        let count = self.doc().headings.len();
-        if count == 0 {
-            return;
-        }
-        let from = self.outline_cursor.or_else(|| self.heading_at_caret()).unwrap_or(0);
-        let next = (from as isize + delta).clamp(0, count as isize - 1) as usize;
-        self.outline_cursor = Some(next);
-        // The outline is virtualised, so moving the highlight must also bring it into view.
-        self.doc().outline.scroll_to_reveal_item(next);
-        cx.notify();
-    }
-
-    fn outline_open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let index = self.outline_cursor.or_else(|| self.heading_at_caret());
-        let Some(line) = index.and_then(|index| self.doc().headings.get(index)).map(|heading| heading.line) else { return };
-        self.jump_to_line(line, cx);
-        self.outline_cursor = None;
-        self.focus_editor(window, cx);
     }
 
     // ----- Status bar -----
@@ -542,64 +454,6 @@ impl Prototype {
             }))
     }
 
-    // ----- Preview scrolling from the keyboard -----
-
-    pub fn preview_keys<E: InteractiveElement>(&self, element: E, cx: &mut Context<Self>) -> E {
-        let line = px(40.);
-        element
-            .on_action(cx.listener(|this, _: &PreviewLinkNext, _, cx| this.preview_link_step(1, cx)))
-            .on_action(cx.listener(|this, _: &PreviewLinkPrevious, _, cx| this.preview_link_step(-1, cx)))
-            .on_action(cx.listener(|this, _: &PreviewLinkOpen, window, cx| this.preview_link_open(window, cx)))
-            .on_action(cx.listener(move |this, _: &PreviewLineUp, _, cx| this.scroll_preview(line, cx)))
-            .on_action(cx.listener(move |this, _: &PreviewLineDown, _, cx| this.scroll_preview(-line, cx)))
-            .on_action(cx.listener(|this, _: &PreviewPageUp, _, cx| {
-                let page = this.doc().block_list.viewport_bounds().size.height * 0.9;
-                this.scroll_preview(page, cx);
-            }))
-            .on_action(cx.listener(|this, _: &PreviewPageDown, _, cx| {
-                let page = this.doc().block_list.viewport_bounds().size.height * 0.9;
-                this.scroll_preview(-page, cx);
-            }))
-            .on_action(cx.listener(|this, _: &PreviewTop, _, cx| {
-                this.doc().block_list.scroll_to(ListOffset { item_ix: 0, offset_in_item: px(0.) });
-                cx.notify();
-            }))
-            .on_action(cx.listener(|this, _: &PreviewBottom, _, cx| {
-                this.doc().block_list.scroll_to_end();
-                cx.notify();
-            }))
-    }
-
-    /// Left and right move through the preview's links, and scroll the chosen one into view. The
-    /// preview itself is the tab stop, so a document with many links does not fill the Tab order.
-    fn preview_link_step(&mut self, delta: isize, cx: &mut Context<Self>) {
-        let count = self.preview_links().len() as isize;
-        if count == 0 {
-            self.preview_link = None;
-            cx.notify();
-            return;
-        }
-        let next = match self.preview_link {
-            Some(index) => (index as isize + delta).rem_euclid(count),
-            None if delta > 0 => 0,
-            None => count - 1,
-        } as usize;
-        self.preview_link = Some(next);
-        let block = self.preview_links()[next].1;
-        self.doc().block_list.scroll_to(ListOffset { item_ix: block, offset_in_item: px(0.) });
-        cx.notify();
-    }
-
-    fn preview_link_open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((link, _)) = self.preview_link.and_then(|index| self.preview_links().get(index).cloned()) else { return };
-        self.follow_link(&link, window, cx);
-    }
-
-    /// Positive `by` scrolls up, like a wheel turned away from you.
-    fn scroll_preview(&mut self, by: Pixels, cx: &mut Context<Self>) {
-        self.doc().block_list.scroll_by(-by);
-        cx.notify();
-    }
 }
 
 /// A focusable control with the ring drawn in its border, which is transparent until the control

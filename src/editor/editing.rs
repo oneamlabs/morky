@@ -46,10 +46,12 @@ impl Prototype {
     }
 
     pub(super) fn after_change(&mut self, cx: &mut Context<Self>) {
-        self.preview_link = None;
         self.typed_at = Some(Instant::now());
         self.doc_mut().edited_at = self.typed_at;
         let (id, pause) = (self.doc().id, parse_pause(self.doc().last_parse_ms));
+        if let Some(views) = self.views.get(&id) {
+            views.preview.update(cx, |pane, cx| pane.clear_selection(cx));
+        }
         self.schedule_parse(id, pause, cx);
         self.schedule_auto_save(id, cx);
         cx.notify();
@@ -91,6 +93,7 @@ impl Prototype {
     fn apply_parse(&mut self, id: u64, version: u64, parsed: Parsed, parse_ms: f64, cx: &mut Context<Self>) {
         let applying = Instant::now();
         let Parsed { blocks, spans, longest, counts, base, changed, images, links, headings } = parsed;
+        let views = self.views.get(&id).map(|views| (views.preview.clone(), views.outline.clone()));
         let Some(doc) = self.tabs.iter_mut().find(|doc| doc.id == id) else { return };
         if doc.buffer.version() != version {
             return;
@@ -106,16 +109,19 @@ impl Prototype {
         // Only one parse per document is in flight (a new one replaces the task), so the blocks it
         // compared against are still the shown ones; if not, compare here.
         let (changed, count) = if Arc::ptr_eq(&base, &doc.blocks) { changed } else { preview_view::changed_blocks(&doc.blocks, &blocks) };
-        doc.block_list.splice(changed, count);
-        let old_blocks = std::mem::replace(&mut doc.blocks, Arc::new(blocks));
+        let blocks = Arc::new(blocks);
+        let preview_links = links;
+        let preview_headings = headings.clone();
+        let old_blocks = std::mem::replace(&mut doc.blocks, blocks.clone());
         let old_spans = std::mem::replace(&mut doc.spans, spans);
         doc.images = Arc::new(images);
-        doc.links = links;
-        let old_headings = doc.headings.len();
         doc.headings = headings;
-        doc.outline.splice(0..old_headings, doc.headings.len());
         doc.longest_line = longest;
         doc.synced_source_line = None;
+        if let Some((preview, outline)) = views {
+            preview.update(cx, |pane, cx| pane.apply(blocks, preview_links, changed, count, cx));
+            outline.update(cx, |pane, cx| pane.set_headings(preview_headings, cx));
+        }
         // Freeing a large document's old blocks and colours is itself tens of milliseconds.
         cx.background_spawn(async move { drop((old_blocks, old_spans, base)) }).detach();
         self.release_unused_images(cx);

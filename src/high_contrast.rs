@@ -47,8 +47,10 @@ fn palette() -> Palette {
 }
 
 /// Reads the current theme. Called at startup and at most once a second from the frame loop, so a
-/// theme switch applies without restarting the app.
-pub fn refresh() {
+/// theme switch applies without restarting the app. Returns whether the palette changed, so cached
+/// views can be repainted.
+pub fn refresh() -> bool {
+    let before = snapshot();
     let mut contrast = HIGHCONTRASTW { cbSize: std::mem::size_of::<HIGHCONTRASTW>() as u32, ..Default::default() };
     let ok = unsafe {
         SystemParametersInfoW(
@@ -60,23 +62,30 @@ pub fn refresh() {
     };
     let active = ok != 0 && contrast.dwFlags & HCF_HIGHCONTRASTON != 0;
     ACTIVE.store(active, Ordering::Relaxed);
-    if !active {
-        return;
+    if active {
+        let color = |index| from_colorref(unsafe { GetSysColor(index) });
+        WINDOW.store(color(COLOR_WINDOW), Ordering::Relaxed);
+        WINDOW_TEXT.store(color(COLOR_WINDOWTEXT), Ordering::Relaxed);
+        BUTTON_FACE.store(color(COLOR_BTNFACE), Ordering::Relaxed);
+        HIGHLIGHT.store(color(COLOR_HIGHLIGHT), Ordering::Relaxed);
+        GRAY_TEXT.store(color(COLOR_GRAYTEXT), Ordering::Relaxed);
+        HOTLIGHT.store(color(COLOR_HOTLIGHT), Ordering::Relaxed);
     }
-    let color = |index| from_colorref(unsafe { GetSysColor(index) });
-    WINDOW.store(color(COLOR_WINDOW), Ordering::Relaxed);
-    WINDOW_TEXT.store(color(COLOR_WINDOWTEXT), Ordering::Relaxed);
-    BUTTON_FACE.store(color(COLOR_BTNFACE), Ordering::Relaxed);
-    HIGHLIGHT.store(color(COLOR_HIGHLIGHT), Ordering::Relaxed);
-    GRAY_TEXT.store(color(COLOR_GRAYTEXT), Ordering::Relaxed);
-    HOTLIGHT.store(color(COLOR_HOTLIGHT), Ordering::Relaxed);
+    before != snapshot()
 }
 
-pub fn refresh_periodically() {
+fn snapshot() -> (bool, u32, u32, u32, u32, u32, u32) {
+    let get = |value: &AtomicU32| value.load(Ordering::Relaxed);
+    (ACTIVE.load(Ordering::Relaxed), get(&WINDOW), get(&WINDOW_TEXT), get(&BUTTON_FACE), get(&HIGHLIGHT), get(&GRAY_TEXT), get(&HOTLIGHT))
+}
+
+/// As `refresh`, but only reads the system once a second. Returns whether the palette changed.
+pub fn refresh_periodically() -> bool {
     let seconds = SystemTime::now().duration_since(UNIX_EPOCH).map(|time| time.as_secs() as u32).unwrap_or(0);
     if LAST_REFRESH.swap(seconds, Ordering::Relaxed) != seconds {
-        refresh();
+        return refresh();
     }
+    false
 }
 
 /// The colour to use for a light/dark pair, or `None` while high contrast is off.
