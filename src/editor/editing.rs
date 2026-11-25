@@ -111,7 +111,9 @@ impl Prototype {
         let old_spans = std::mem::replace(&mut doc.spans, spans);
         doc.images = Arc::new(images);
         doc.links = links;
+        let old_headings = doc.headings.len();
         doc.headings = headings;
+        doc.outline.splice(0..old_headings, doc.headings.len());
         doc.longest_line = longest;
         doc.synced_source_line = None;
         // Freeing a large document's old blocks and colours is itself tens of milliseconds.

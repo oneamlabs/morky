@@ -64,6 +64,8 @@ fn block_role(kind: Kind) -> Role {
         Kind::Quote => Role::Blockquote,
         Kind::Item { .. } => Role::ListItem,
         Kind::Code => Role::Code,
+        // Frontmatter is metadata, not a heading or a code sample.
+        Kind::Metadata => Role::Group,
         Kind::Math => Role::Math,
         Kind::Diagram | Kind::Image => Role::Image,
         Kind::Table => Role::Table,
@@ -102,7 +104,7 @@ fn preview_block(block: &Block, look: &Look, cx: &mut Context<Prototype>) -> gpu
         Kind::Heading(1) => px(font_size + 8.),
         Kind::Heading(2) => px(font_size + 4.),
         Kind::Heading(_) => px(font_size + 2.),
-        Kind::Code | Kind::Math | Kind::Diagram => look.code_size(),
+        Kind::Code | Kind::Math | Kind::Diagram | Kind::Metadata => look.code_size(),
         Kind::Footnote(_) => px(font_size * 0.9),
         _ => px(font_size),
     };
@@ -111,6 +113,9 @@ fn preview_block(block: &Block, look: &Look, cx: &mut Context<Prototype>) -> gpu
     }
     if let (Kind::Code, Some(spans)) = (block.kind, &block.code) {
         return code_block(&block.text, spans, look);
+    }
+    if let Kind::Metadata = block.kind {
+        return code_block(&block.text, &[], look);
     }
     if let Kind::Image = block.kind {
         return image_block(block, look);
@@ -155,7 +160,7 @@ fn preview_block(block: &Block, look: &Look, cx: &mut Context<Prototype>) -> gpu
         Kind::Paragraph => div().mb_3().child(body),
         // The app's `hr`: a 1px line with the block spacing around it.
         Kind::Rule => div().mt_1().mb_4().h(px(1.)).bg(look.border()),
-        Kind::Table | Kind::Image | Kind::Math | Kind::Diagram => div(),
+        Kind::Table | Kind::Image | Kind::Math | Kind::Diagram | Kind::Metadata => div(),
     }
 }
 
@@ -489,7 +494,9 @@ impl gpui::Render for TitleTip {
 /// The range of blocks a re-parse changed, found like the app's preview-blocks.ts: the common prefix and
 /// suffix are kept. Blocks compare without their line, so a line added above only renumbers kept blocks.
 pub fn changed_blocks(old: &[Block], new: &[Block]) -> (std::ops::Range<usize>, usize) {
-    let same = |a: &Block, b: &Block| a.kind == b.kind && a.text == b.text && a.runs == b.runs && a.table == b.table && a.code == b.code && a.src == b.src;
+    let same = |a: &Block, b: &Block| {
+        a.kind == b.kind && a.text == b.text && a.runs == b.runs && a.table == b.table && a.code == b.code && a.src == b.src && a.footnote == b.footnote
+    };
     let prefix = old.iter().zip(new).take_while(|(a, b)| same(a, b)).count();
     let suffix = old[prefix..].iter().rev().zip(new[prefix..].iter().rev()).take_while(|(a, b)| same(a, b)).count();
     (prefix..old.len() - suffix, new.len() - prefix - suffix)

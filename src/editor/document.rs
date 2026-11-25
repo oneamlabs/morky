@@ -28,6 +28,9 @@ pub struct Document {
     /// drawing a frame does not walk every block.
     pub(super) links: Vec<(Arc<str>, usize)>,
     pub(super) headings: Vec<Heading>,
+    /// One item per heading, so the outline draws only what is on screen and can scroll to the
+    /// heading the arrow keys select.
+    pub(super) outline: ListState,
     /// Syntax colours per source line, from the last background parse.
     pub(super) spans: Vec<Vec<Span>>,
     /// The longest line in characters, from the last parse: the width to scroll to when word wrap is off.
@@ -174,6 +177,7 @@ impl Document {
             images: Arc::default(),
             links: Vec::new(),
             headings: Vec::new(),
+            outline: ListState::new(0, ListAlignment::Top, px(OVERDRAW)),
             spans: Vec::new(),
             longest_line: 0,
             parse_task: None,
@@ -293,7 +297,7 @@ mod tests {
         assert!(headings_of(&blocks).is_empty());
         assert!(links_of(&blocks).is_empty());
         assert!(ImagesInUse::of(&blocks).formulas.is_empty());
-        let no_runs = Block { kind: Kind::Paragraph, text: String::new(), runs: Vec::new(), line: 1, table: None, code: None, src: None };
+        let no_runs = Block { kind: Kind::Paragraph, text: String::new(), runs: Vec::new(), line: 1, table: None, code: None, src: None, footnote: None };
         assert!(links_of(std::slice::from_ref(&no_runs)).is_empty());
     }
 }

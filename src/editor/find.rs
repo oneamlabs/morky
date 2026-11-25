@@ -9,6 +9,11 @@ use super::*;
 impl Prototype {
     pub(super) fn open_find(&mut self, show_replace: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.open_menu = None;
+        // Finding in a hidden editor would select matches nobody can see.
+        if !self.settings.show_editor {
+            self.settings.show_editor = true;
+            self.keep_settings(cx);
+        }
         if self.find.is_none() {
             let query = cx.new(|cx| TextField::new("Find", cx));
             let replacement = cx.new(|cx| TextField::new("Replace with", cx));

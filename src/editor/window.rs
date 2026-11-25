@@ -7,24 +7,19 @@ impl Prototype {
     /// Writes the restored window bounds a moment after a resize or move stops, so dragging does
     /// not write the file on every frame.
     pub(super) fn schedule_geometry_save(&mut self, window: &Window, cx: &mut Context<Self>) {
-        let bounds = match window.window_bounds() {
-            WindowBounds::Windowed(bounds) => (bounds, false),
-            WindowBounds::Maximized(bounds) | WindowBounds::Fullscreen(bounds) => (bounds, true),
-        };
-        let geometry = store::WindowGeometry {
-            width: f64::from(f32::from(bounds.0.size.width)),
-            height: f64::from(f32::from(bounds.0.size.height)),
-            x: f64::from(f32::from(bounds.0.origin.x)),
-            y: f64::from(f32::from(bounds.0.origin.y)),
-            maximized: bounds.1,
-        };
+        let geometry = Self::geometry_of(window);
         let config_dir = self.config_dir.clone();
         self.geometry_task = Some(cx.spawn(async move |_this, cx| {
             cx.background_executor().timer(Duration::from_millis(500)).await;
-            if let Err(err) = store::save_window_geometry(&config_dir, &geometry) {
-                diagnostics::write(&format!("could not save the window geometry: {err}"));
-            }
+            // The write itself does not run on the UI thread; dragging must not wait for a disk sync.
+            cx.background_executor().spawn(async move { Self::save_geometry(&config_dir, &geometry) }).detach();
         }));
+    }
+
+    /// Writes the current bounds now. Closing drops the debounced task, so this keeps the last move
+    /// or resize instead of losing it.
+    pub(super) fn flush_geometry(&self, window: &Window) {
+        Self::save_geometry(&self.config_dir, &Self::geometry_of(window));
     }
 
     /// The title is the document's name and a dot while it has unsaved changes.
@@ -34,6 +29,27 @@ impl Prototype {
         if title != self.window_title {
             window.set_window_title(&title);
             self.window_title = title;
+        }
+    }
+
+    /// The window's current bounds, as the settings file stores them.
+    fn geometry_of(window: &Window) -> store::WindowGeometry {
+        let (bounds, maximized) = match window.window_bounds() {
+            WindowBounds::Windowed(bounds) => (bounds, false),
+            WindowBounds::Maximized(bounds) | WindowBounds::Fullscreen(bounds) => (bounds, true),
+        };
+        store::WindowGeometry {
+            width: f64::from(f32::from(bounds.size.width)),
+            height: f64::from(f32::from(bounds.size.height)),
+            x: f64::from(f32::from(bounds.origin.x)),
+            y: f64::from(f32::from(bounds.origin.y)),
+            maximized,
+        }
+    }
+
+    fn save_geometry(config_dir: &Path, geometry: &store::WindowGeometry) {
+        if let Err(err) = store::save_window_geometry(config_dir, geometry) {
+            diagnostics::write(&format!("could not save the window geometry: {err}"));
         }
     }
 

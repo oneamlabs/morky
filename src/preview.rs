@@ -39,6 +39,8 @@ pub enum Kind {
     Code,
     Math,
     Diagram,
+    /// YAML frontmatter, drawn as a plain metadata block.
+    Metadata,
     /// The cells are in `Block::table`.
     Table,
     /// A footnote's text; the number is the one its references show.
@@ -103,6 +105,9 @@ pub struct Block {
     pub code: Option<Arc<Vec<Span>>>,
     /// An image block's path or URL, as written.
     pub src: Option<String>,
+    /// The footnote definition this block belongs to. Gathers every block kind (lists, code,
+    /// quotes) at the end of the preview, and keeps `block_at_line` off the appended notes.
+    pub footnote: Option<u32>,
 }
 
 #[derive(Clone, Copy)]
@@ -113,6 +118,7 @@ enum Open {
     Code,
     Math,
     Diagram,
+    Metadata,
     Table,
     Term,
     Definition,
@@ -221,7 +227,7 @@ pub fn blocks_with(markdown: &str, flavor: Flavor) -> Vec<Block> {
             Event::Rule => {
                 parse.finish(&mut out);
                 let line = parse.lines.line_at(markdown, range.start);
-                out.push(Block { kind: Kind::Rule, text: String::new(), runs: Vec::new(), line, table: None, code: None, src: None });
+                out.push(Block { kind: Kind::Rule, text: String::new(), runs: Vec::new(), line, table: None, code: None, src: None, footnote: parse.footnote });
             }
             Event::Start(Tag::BlockQuote(_)) => parse.quote += 1,
             Event::End(TagEnd::BlockQuote(_)) => parse.quote = parse.quote.saturating_sub(1),
@@ -283,6 +289,10 @@ pub fn blocks_with(markdown: &str, flavor: Flavor) -> Vec<Block> {
                 parse.finish(&mut out);
                 parse.footnote = None;
             }
+            Event::Start(Tag::MetadataBlock(_)) => {
+                parse.begin(Open::Metadata, markdown, range.start, &mut out);
+                parse.code_info.clear();
+            }
             Event::Start(Tag::DefinitionListTitle) => parse.begin(Open::Term, markdown, range.start, &mut out),
             Event::Start(Tag::DefinitionListDefinition) => parse.begin(Open::Definition, markdown, range.start, &mut out),
             Event::End(TagEnd::DefinitionListTitle) | Event::End(TagEnd::DefinitionListDefinition) => parse.finish(&mut out),
@@ -303,7 +313,7 @@ pub fn blocks_with(markdown: &str, flavor: Flavor) -> Vec<Block> {
                     row.push(cell);
                 }
             }
-            Event::End(TagEnd::Heading(_)) | Event::End(TagEnd::CodeBlock) | Event::End(TagEnd::Table) => {
+            Event::End(TagEnd::Heading(_)) | Event::End(TagEnd::CodeBlock) | Event::End(TagEnd::Table) | Event::End(TagEnd::MetadataBlock(_)) => {
                 parse.finish(&mut out);
             }
             Event::End(TagEnd::Paragraph) => {
@@ -330,7 +340,19 @@ pub fn blocks_with(markdown: &str, flavor: Flavor) -> Vec<Block> {
             Event::Code(fragment) if parse.open.is_some() => parse.push(&fragment, true),
             Event::InlineMath(tex) if parse.open.is_some() => parse.push_math(&tex, false),
             Event::DisplayMath(tex) if parse.open.is_some() => parse.push_math(&tex, true),
-            Event::SoftBreak | Event::HardBreak if matches!(parse.open, Some(Open::Code | Open::Math | Open::Diagram)) => parse.push("\n", false),
+            // Raw HTML is never executed or rendered; it shows as the text that was written, as
+            // markdown-it does with `html: false`, rather than disappearing.
+            Event::Html(fragment) => {
+                if parse.open.is_some() {
+                    parse.push(&fragment, false);
+                } else {
+                    parse.begin(Open::Paragraph, markdown, range.start, &mut out);
+                    parse.push(&fragment, false);
+                    parse.finish(&mut out);
+                }
+            }
+            Event::InlineHtml(fragment) if parse.open.is_some() => parse.push(&fragment, false),
+            Event::SoftBreak | Event::HardBreak if matches!(parse.open, Some(Open::Code | Open::Math | Open::Diagram | Open::Metadata)) => parse.push("\n", false),
             Event::SoftBreak | Event::HardBreak if parse.open.is_some() => parse.push(" ", false),
             _ => {}
         }
@@ -343,28 +365,28 @@ pub fn blocks_with(markdown: &str, flavor: Flavor) -> Vec<Block> {
 /// of their numbers, each ending with a link back to its reference; footnotes nothing refers to are
 /// left out. Their blocks keep their own source lines, so the editor can still find them.
 fn gather_footnotes(blocks: Vec<Block>, referenced: &HashSet<u32>) -> Vec<Block> {
-    if !blocks.iter().any(|block| matches!(block.kind, Kind::Footnote(_))) {
+    if !blocks.iter().any(|block| block.footnote.is_some()) {
         return blocks;
     }
-    let (mut notes, mut body): (Vec<Block>, Vec<Block>) = blocks.into_iter().partition(|block| matches!(block.kind, Kind::Footnote(_)));
-    notes.retain(|block| matches!(block.kind, Kind::Footnote(number) if referenced.contains(&number)));
+    let (mut notes, mut body): (Vec<Block>, Vec<Block>) = blocks.into_iter().partition(|block| block.footnote.is_some());
+    notes.retain(|block| block.footnote.is_some_and(|number| referenced.contains(&number)));
     if notes.is_empty() {
         return body;
     }
-    notes.sort_by_key(|block| match block.kind {
-        Kind::Footnote(number) => number,
-        _ => 0,
-    });
+    // Stable, so the blocks of one note stay in document order even when notes are interleaved.
+    notes.sort_by_key(|block| block.footnote.unwrap_or(0));
     for index in 0..notes.len() {
-        let Kind::Footnote(number) = notes[index].kind else { continue };
-        let last_of_note = notes.get(index + 1).is_none_or(|next| next.kind != notes[index].kind);
-        if last_of_note {
+        let number = notes[index].footnote.unwrap_or(0);
+        let last_of_note = notes.get(index + 1).is_none_or(|next| next.footnote != notes[index].footnote);
+        // A note ending in code, math, a table or an image has nowhere visible to put the link back.
+        let renders_runs = matches!(notes[index].kind, Kind::Paragraph | Kind::Quote | Kind::Footnote(_) | Kind::Item { .. } | Kind::Term | Kind::Definition);
+        if last_of_note && renders_runs {
             let back = RunStyle { link: Some(Arc::from(format!("#fnref:{number}"))), ..RunStyle::default() };
             notes[index].runs.push(Run { text: " ↩".to_string(), style: back });
         }
     }
     let line = notes[0].line;
-    body.push(Block { kind: Kind::Rule, text: String::new(), runs: Vec::new(), line, table: None, code: None, src: None });
+    body.push(Block { kind: Kind::Rule, text: String::new(), runs: Vec::new(), line, table: None, code: None, src: None, footnote: None });
     body.extend(notes);
     body
 }
@@ -435,25 +457,27 @@ impl Parse {
             self.finish_table(out);
             return;
         }
+        let footnote = self.footnote;
         let mut runs = std::mem::take(&mut self.runs);
         if std::mem::take(&mut self.hidden) {
             return;
         }
-        if !matches!(open, Open::Code | Open::Math | Open::Diagram) {
+        if !matches!(open, Open::Code | Open::Math | Open::Diagram | Open::Metadata) {
             runs = self.inline(runs);
         }
         // A paragraph that is only an image is drawn as the image.
         if let (Open::Paragraph, [run]) = (open, runs.as_slice()) {
             if let Some(src) = run.style.link.as_deref().and_then(|link| link.strip_prefix("image:")) {
                 let src = Some(src.to_string());
-                out.push(Block { kind: Kind::Image, text: run.text.clone(), runs: Vec::new(), line: self.line, table: None, code: None, src });
+                out.push(Block { kind: Kind::Image, text: run.text.clone(), runs: Vec::new(), line: self.line, table: None, code: None, src, footnote });
                 return;
             }
         }
         let text: String = runs.iter().map(|run| run.text.as_str()).collect();
-        // Code keeps its first line's indentation; only the newline before the closing fence goes.
+        // Code and frontmatter keep their first line's indentation; only the newline before the
+        // closing fence goes.
         let text = match open {
-            Open::Code | Open::Diagram => text.trim_end_matches('\n').to_string(),
+            Open::Code | Open::Diagram | Open::Metadata => text.trim_end_matches('\n').to_string(),
             _ => text.trim().to_string(),
         };
         if text.trim().is_empty() && !matches!(open, Open::Item { checked: Some(_), .. }) {
@@ -471,6 +495,7 @@ impl Parse {
             Open::Code => Kind::Code,
             Open::Math => Kind::Math,
             Open::Diagram => Kind::Diagram,
+            Open::Metadata => Kind::Metadata,
             Open::Term => Kind::Term,
             Open::Definition => Kind::Definition,
             Open::Table => unreachable!("tables finish in finish_table"),
@@ -480,7 +505,7 @@ impl Parse {
             Kind::Code => syntax::highlight_code(&std::mem::take(&mut self.code_info), &text),
             _ => None,
         };
-        out.push(Block { kind, text, runs, line: self.line, table: None, code, src: None });
+        out.push(Block { kind, text, runs, line: self.line, table: None, code, src: None, footnote });
     }
 
     /// `text` is the cells joined by ` | ` per row, for tests; the outline lists headings only.
@@ -496,7 +521,7 @@ impl Parse {
             .map(|row| row.iter().map(|cell| plain_text(cell)).collect::<Vec<_>>().join(" | "))
             .collect::<Vec<_>>()
             .join("\n");
-        out.push(Block { kind: Kind::Table, text, runs: Vec::new(), line: self.line, table: Some(table), code: None, src: None });
+        out.push(Block { kind: Kind::Table, text, runs: Vec::new(), line: self.line, table: Some(table), code: None, src: None, footnote: self.footnote });
     }
 }
 
@@ -636,10 +661,16 @@ fn align_of(align: &Alignment) -> Align {
 }
 
 
-/// The last block that starts on or before `line` (1-based). Used to keep the preview beside the source.
+/// The last block that starts on or before `line` (1-based). Used to keep the preview beside the
+/// source. The gathered footnotes and the rule above them are appended out of line order, so only
+/// the body before them is searched.
 pub fn block_at_line(blocks: &[Block], line: usize) -> usize {
+    let body_end = blocks
+        .iter()
+        .position(|block| block.footnote.is_some())
+        .map_or(blocks.len(), |first_note| first_note.saturating_sub(1));
     let mut index = 0;
-    for (i, block) in blocks.iter().enumerate() {
+    for (i, block) in blocks[..body_end].iter().enumerate() {
         if block.line > line {
             break;
         }
@@ -679,6 +710,7 @@ mod tests {
             table: None,
             code: None,
             src: None,
+            footnote: None,
         }
     }
 
@@ -846,9 +878,30 @@ mod tests {
     }
 
     #[test]
-    fn frontmatter_is_not_a_heading() {
+    fn frontmatter_is_a_metadata_block_not_a_heading() {
         let blocks = blocks("---\nname: deploy\n---\n\n# Title\n");
-        assert_eq!(blocks, vec![plain(Kind::Heading(1), "Title", 5)]);
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0].kind, Kind::Metadata);
+        assert_eq!(blocks[0].text, "name: deploy");
+        assert_eq!(blocks[0].line, 1);
+        // Frontmatter is not run through the typographer or the linkifier.
+        assert_eq!(blocks[0].runs, vec![Run { text: "name: deploy".into(), style: RunStyle::default() }]);
+        assert_eq!(blocks[1], plain(Kind::Heading(1), "Title", 5));
+    }
+
+    /// Raw HTML is not rendered (and never executed), but it must not disappear either: the old
+    /// markdown-it shell showed it as text, and that is what a reader needs to see.
+    #[test]
+    fn raw_html_is_shown_as_text() {
+        let html_blocks = blocks("<div class=\"note\">hello</div>\n\nAfter.\n");
+        assert_eq!(html_blocks.len(), 2);
+        assert_eq!(html_blocks[0].kind, Kind::Paragraph);
+        assert_eq!(html_blocks[0].text, "<div class=\"note\">hello</div>");
+        assert_eq!(html_blocks[0].line, 1);
+        assert_eq!(html_blocks[1].text, "After.");
+        // Inline tags stay in the paragraph, around the text they wrapped.
+        let inline_html = blocks("Before <span>inside</span> after.\n");
+        assert_eq!(inline_html[0].text, "Before <span>inside</span> after.");
     }
 
     #[test]
@@ -877,6 +930,30 @@ mod tests {
         assert_eq!(blocks[3].text, "Second note.");
         assert_eq!(blocks[3].line, 7);
         assert_eq!(blocks[3].runs.last().and_then(|run| run.style.link.as_deref()), Some("#fnref:1"));
+    }
+
+    /// A footnote is often a list or a code block, not a paragraph; every block of the definition is
+    /// gathered under its number, and only the last one carries the link back.
+    #[test]
+    fn footnotes_gather_lists_and_code_blocks() {
+        let markdown = "Text[^1].\n\n[^1]:\n    - item one\n    - item two\n";
+        let blocks = blocks(markdown);
+        let kinds: Vec<Kind> = blocks.iter().map(|block| block.kind).collect();
+        assert_eq!(kinds, vec![Kind::Paragraph, Kind::Rule, Kind::Item { ordered: None, checked: None }, Kind::Item { ordered: None, checked: None }]);
+        assert_eq!(blocks[2].text, "item one");
+        assert_eq!(blocks[3].text, "item two");
+        assert!(blocks[2..].iter().all(|block| block.footnote == Some(1)));
+        assert_eq!(blocks[3].runs.last().and_then(|run| run.style.link.as_deref()), Some("#fnref:1"));
+        assert_eq!(blocks[2].runs.last().and_then(|run| run.style.link.as_deref()), None);
+    }
+
+    /// Footnotes appended at the end keep earlier source lines; the scroll map must not use them.
+    #[test]
+    fn block_at_line_ignores_gathered_footnotes() {
+        let blocks = blocks("One[^1].\n\n[^1]: The note.\n\nText after the definition.\n");
+        assert_eq!(blocks[1].text, "Text after the definition.");
+        assert_eq!(block_at_line(&blocks, 5), 1);
+        assert_eq!(block_at_line(&blocks, 6), 1);
     }
 
     #[test]

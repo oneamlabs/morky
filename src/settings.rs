@@ -4,11 +4,18 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, PoisonError};
 
 use gpui::WindowAppearance;
 use serde_json::{Map, Value};
 
+use crate::diagnostics;
 use crate::files::{self, LineEnding};
+
+/// Two quick settings changes can finish out of order; only the newest generation is written.
+static SAVE_TURN: Mutex<()> = Mutex::new(());
+static SAVE_GENERATION: AtomicU64 = AtomicU64::new(0);
 
 const FILE_NAME: &str = "settings.json";
 const MAX_BYTES: u64 = 16 * 1024;
@@ -91,6 +98,12 @@ impl ViewSettings {
     pub fn preview_visible(&self) -> bool {
         self.show_preview || !self.show_editor
     }
+
+    /// False when the saved file exists but could not be read: changes stay in memory rather than
+    /// overwriting a file we do not understand.
+    pub fn can_save(&self) -> bool {
+        self.save
+    }
 }
 
 fn roaming() -> PathBuf {
@@ -147,6 +160,7 @@ pub fn save(config_dir: &Path, settings: &ViewSettings) -> Result<(), String> {
     if !settings.save {
         return Ok(());
     }
+    let generation = SAVE_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
     let mut root = settings.rest.clone();
     root.insert("theme".into(), Value::String(settings.theme.as_str().into()));
     root.insert("fontSize".into(), serde_json::json!(settings.font_size));
@@ -166,6 +180,11 @@ pub fn save(config_dir: &Path, settings: &ViewSettings) -> Result<(), String> {
     );
     let bytes = serde_json::to_vec_pretty(&Value::Object(root)).map_err(|err| format!("could not encode settings: {err}"))?;
     fs::create_dir_all(config_dir).map_err(|err| format!("could not create {}: {err}", config_dir.display()))?;
+    let _turn = SAVE_TURN.lock().unwrap_or_else(PoisonError::into_inner);
+    // A newer save has started (and will write itself); this older snapshot must not land last.
+    if SAVE_GENERATION.load(Ordering::SeqCst) != generation {
+        return Ok(());
+    }
     files::write_atomically(&config_dir.join(FILE_NAME), &bytes).map_err(|err| format!("could not save settings: {err}"))
 }
 
@@ -184,14 +203,22 @@ enum Read {
 fn read_object(path: &Path) -> Read {
     let bytes = match fs::read(path) {
         Ok(bytes) => bytes,
-        Err(_) => return Read::Missing,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Read::Missing,
+        Err(err) => {
+            diagnostics::write(&format!("could not read {}: {err}", path.display()));
+            return Read::LeaveAlone;
+        }
     };
     if bytes.len() as u64 > MAX_BYTES {
+        diagnostics::write(&format!("{} is larger than {MAX_BYTES} bytes; leaving it alone", path.display()));
         return Read::LeaveAlone;
     }
     match serde_json::from_slice(&bytes) {
         Ok(Value::Object(map)) => Read::Object(map),
-        _ => Read::LeaveAlone,
+        _ => {
+            diagnostics::write(&format!("{} is not a JSON object; leaving it alone", path.display()));
+            Read::LeaveAlone
+        }
     }
 }
 

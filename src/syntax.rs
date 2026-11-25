@@ -10,7 +10,7 @@ use std::ops::Range;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use gpui::{FontStyle, FontWeight, HighlightStyle, StrikethroughStyle, px, rgb};
-use pulldown_cmark::{CodeBlockKind, Event, Parser, Tag};
+use pulldown_cmark::{CodeBlockKind, Event, Parser, Tag, TagEnd};
 use tree_sitter::Language;
 use tree_sitter_highlight::{HighlightConfiguration, HighlightEvent, Highlighter};
 
@@ -335,6 +335,7 @@ pub fn source_spans(text: &str) -> Vec<Vec<Span>> {
 
     // The preview's options, so both panes agree on what is markup.
     let mut fence: Option<(String, Range<usize>, Option<Range<usize>>)> = None;
+    let mut metadata = false;
     for (event, range) in Parser::new_ext(text, crate::preview::options()).into_offset_iter() {
         match event {
             Event::Start(Tag::Heading { .. }) => add(range, Token::Heading),
@@ -343,7 +344,17 @@ pub fn source_spans(text: &str) -> Vec<Vec<Span>> {
             Event::Start(Tag::Strikethrough) => add(range, Token::Strike),
             Event::Start(Tag::Link { .. }) | Event::Start(Tag::Image { .. }) => add(range, Token::Link),
             Event::Start(Tag::BlockQuote(_)) => add(range, Token::Quote),
-            Event::Start(Tag::MetadataBlock(_)) | Event::Rule => add(range, Token::Muted),
+            Event::Start(Tag::MetadataBlock(_)) => {
+                metadata = true;
+                add(range, Token::Muted);
+            }
+            Event::End(TagEnd::MetadataBlock(_)) => {
+                metadata = false;
+                add(range, Token::Muted);
+            }
+            Event::Rule => add(range, Token::Muted),
+            // Raw HTML is shown as text in the preview, and reads as markup here too.
+            Event::Html(_) | Event::InlineHtml(_) => add(range, Token::Muted),
             Event::Code(_) => add(range, Token::Code),
             Event::Start(Tag::Item) => {
                 let marker = text[range.start..].bytes().take_while(|b| b.is_ascii_digit() || matches!(b, b'-' | b'*' | b'+' | b'.' | b')')).count();
@@ -356,6 +367,7 @@ pub fn source_spans(text: &str) -> Vec<Vec<Span>> {
                 };
                 fence = Some((info, range, None));
             }
+            Event::Text(_) if metadata => add(range, Token::Muted),
             Event::Text(_) if fence.is_some() => {
                 if let Some((_, _, content)) = fence.as_mut() {
                     *content = Some(match content.take() {

@@ -15,13 +15,13 @@ impl Prototype {
 
     /// A click on a link in the preview, with the app's rules (`followLink`).
     pub fn follow_link(&mut self, link: &str, _window: &mut Window, cx: &mut Context<Self>) {
-        if link.starts_with("http://") || link.starts_with("https://") || link.starts_with("mailto:") {
+        if opens_outside(link) {
             cx.open_url(link);
             return;
         }
         if let Some(number) = link.strip_prefix("#fn:").and_then(|number| number.parse::<u32>().ok()) {
             let doc = self.doc();
-            if let Some(index) = doc.blocks.iter().position(|block| block.kind == Kind::Footnote(number)) {
+            if let Some(index) = doc.blocks.iter().position(|block| block.footnote == Some(number)) {
                 doc.block_list.scroll_to(ListOffset { item_ix: index, offset_in_item: px(0.) });
                 cx.notify();
             }
@@ -50,6 +50,27 @@ impl Prototype {
                 self.report(format!("Not opened: {link} ({err})"));
                 cx.notify();
             }
+        }
+    }
+}
+
+/// Whether a link opens outside Marky. URL schemes are case-insensitive (RFC 3986).
+fn opens_outside(link: &str) -> bool {
+    let lower = link.to_ascii_lowercase();
+    lower.starts_with("http://") || lower.starts_with("https://") || lower.starts_with("mailto:")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn web_and_mail_schemes_are_recognised_in_any_case() {
+        for link in ["https://example.com", "HTTP://example.com", "HtTpS://example.com/a", "mailto:me@example.com", "MAILTO:me@example.com"] {
+            assert!(opens_outside(link), "{link}");
+        }
+        for link in ["docs/a.md", "file:///C:/a.md", "ftp://example.com", "javascript:alert(1)", "#fn:1"] {
+            assert!(!opens_outside(link), "{link}");
         }
     }
 }

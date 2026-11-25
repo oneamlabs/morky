@@ -132,6 +132,7 @@ mod tests {
             images: Arc::default(),
             links: Vec::new(),
             headings: Vec::new(),
+            outline: ListState::new(0, ListAlignment::Top, px(400.)),
             spans: Vec::new(),
             longest_line: 0,
             parse_task: None,

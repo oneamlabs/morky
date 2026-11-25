@@ -145,24 +145,98 @@ impl Prototype {
         self.recovery.take_changes(versions, documents)
     }
 
-    fn write_recovery(&mut self, cx: &mut Context<Self>) {
+    fn write_recovery(&mut self, _cx: &mut Context<Self>) {
         let Some(changes) = self.take_recovery_changes() else { return };
         let dir = self.recovery.dir().to_path_buf();
-        cx.background_spawn(async move {
-            if let Err(err) = changes.write(&dir) {
-                diagnostics::write(&format!("could not save recovery snapshots: {err}"));
-            }
-        })
-        .detach();
+        self.recovery.enqueue(RecoveryJob::Write { dir, changes });
     }
 
-    /// Synchronous, for closing: a background write could be lost when the process ends.
-    pub(super) fn flush_recovery(&mut self) {
-        let Some(changes) = self.take_recovery_changes() else { return };
-        if let Err(err) = changes.write(self.recovery.dir()) {
-            diagnostics::write(&format!("could not save recovery snapshots on close: {err}"));
+    /// Closes: the writer finishes every snapshot queued before the flush (in order), then this
+    /// returns. A background write would be lost when the process ends.
+    pub(super) fn flush_recovery(&mut self, _cx: &mut Context<Self>) {
+        let changes = self.take_recovery_changes();
+        self.recovery.enqueue_flush(changes);
+    }
+}
+
+/// A snapshot write, or a flush that must complete after every write queued before it.
+enum RecoveryJob {
+    Write { dir: PathBuf, changes: RecoveryWrite },
+    Flush { dir: PathBuf, changes: Option<RecoveryWrite>, done: std::sync::mpsc::Sender<()> },
+}
+
+impl Recovery {
+    /// Queues a write on the one thread that touches `recovery.json`, so snapshots reach the disk
+    /// in the order they were taken; slow writes delay later ones rather than being overtaken.
+    fn enqueue(&self, job: RecoveryJob) {
+        let Some(writer) = snapshot_writer() else {
+            run_job(job);
+            return;
+        };
+        // The writer is gone only if it panicked; write inline rather than lose the snapshot.
+        if let Err(err) = writer.send(job) {
+            run_job(err.0);
         }
     }
+
+    fn enqueue_flush(&self, changes: Option<RecoveryWrite>) {
+        let dir = self.dir.clone();
+        let Some(writer) = snapshot_writer() else {
+            if let Some(changes) = changes {
+                write_snapshots(&dir, changes);
+            }
+            return;
+        };
+        let (done, wait) = std::sync::mpsc::channel();
+        match writer.send(RecoveryJob::Flush { dir: dir.clone(), changes, done }) {
+            Ok(()) => {
+                let _ = wait.recv();
+            }
+            Err(err) => {
+                // The writer thread is gone; write what we have synchronously.
+                if let RecoveryJob::Flush { changes: Some(changes), .. } = err.0 {
+                    write_snapshots(&dir, changes);
+                }
+            }
+        }
+    }
+}
+
+fn run_job(job: RecoveryJob) {
+    match job {
+        RecoveryJob::Write { dir, changes } => write_snapshots(&dir, changes),
+        RecoveryJob::Flush { dir, changes, done } => {
+            if let Some(changes) = changes {
+                write_snapshots(&dir, changes);
+            }
+            let _ = done.send(());
+        }
+    }
+}
+
+fn write_snapshots(dir: &Path, changes: RecoveryWrite) {
+    if let Err(err) = changes.write(dir) {
+        diagnostics::write(&format!("could not save recovery snapshots: {err}"));
+    }
+}
+
+/// The thread that owns `recovery.json`. `None` if it could not start; callers then write inline.
+fn snapshot_writer() -> Option<&'static std::sync::mpsc::Sender<RecoveryJob>> {
+    static WRITER: std::sync::OnceLock<Option<std::sync::mpsc::Sender<RecoveryJob>>> = std::sync::OnceLock::new();
+    WRITER
+        .get_or_init(|| {
+            let (sender, receiver) = std::sync::mpsc::channel::<RecoveryJob>();
+            std::thread::Builder::new()
+                .name("marky-recovery".into())
+                .spawn(move || {
+                    while let Ok(job) = receiver.recv() {
+                        run_job(job);
+                    }
+                })
+                .ok()?;
+            Some(sender)
+        })
+        .as_ref()
 }
 
 #[cfg(test)]

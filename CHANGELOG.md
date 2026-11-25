@@ -4,6 +4,27 @@ Notable changes to Marky, newest first. The format follows [Keep a Changelog](ht
 
 ## [Unreleased]
 
+### Added
+
+- YAML frontmatter now appears in the preview as a metadata block instead of disappearing.
+- Raw HTML is shown as text in the preview. It is never rendered or executed.
+- Footnotes that contain lists, quotes or code are gathered at the end like other footnotes.
+
+### Changed
+
+- Settings changes and window-position writes happen in the background, so a slow disk no longer pauses the window; closing waits for the last settings write. If the settings file cannot be read, Marky says so in the status bar and leaves the file alone.
+- Opening one file by different spellings (`C:\a\b.md` and `c:\a\.\b.md`) reuses the same tab and watcher.
+
+### Fixed
+
+- Ctrl+W on the last tab now closes the window after the unsaved-changes prompt, as the shortcut table says.
+- Find and Replace bring the editor back when it is hidden, and turning the preview off while the editor is hidden shows the editor instead of doing nothing.
+- Links whose scheme is uppercase, such as `HTTPS://…` or `MAILTO:…`, open outside Marky.
+- Preview scrolling stays with the source when a footnote definition appears before later text.
+- A crash-recovery snapshot can no longer land after a newer one and replace it with older text.
+- A temp file left behind by an interrupted save is removed the next time that folder is saved.
+- The window's last position and size are saved when Marky closes, even right after a resize.
+
 ## [0.4.5] - 2026-11-18
 
 ### Added

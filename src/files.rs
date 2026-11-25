@@ -2,11 +2,13 @@
 //! detection on read, and crash-safe atomic replacement on write.
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::fs;
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::UNIX_EPOCH;
+use std::sync::Mutex;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// The extensions Marky opens, offers in dialogs and follows links to.
 pub const MARKDOWN_EXTS: &[&str] = &["md", "markdown", "txt"];
@@ -51,12 +53,17 @@ impl OpenedFile {
 }
 
 pub fn read(path: &Path) -> io::Result<OpenedFile> {
+    // Refuse early when the size is already known, and again when the read stops at the limit:
+    // a file that grows between the two checks must not be loaded whole.
     let size = fs::metadata(path)?.len();
     if size > MAX_OPEN_BYTES {
-        let message = format!("The file is {} MB. Marky opens files up to {} MB.", size.div_ceil(MB), MAX_OPEN_BYTES / MB);
-        return Err(io::Error::other(message));
+        return Err(too_large(size));
     }
-    let bytes = fs::read(path)?;
+    let mut bytes = Vec::with_capacity((size + 1) as usize);
+    fs::File::open(path)?.take(MAX_OPEN_BYTES + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > MAX_OPEN_BYTES {
+        return Err(too_large(bytes.len() as u64));
+    }
     let (bom, body) = match bytes.strip_prefix(BOM) {
         Some(rest) => (true, rest),
         None => (false, &bytes[..]),
@@ -81,6 +88,16 @@ pub fn read(path: &Path) -> io::Result<OpenedFile> {
     })
 }
 
+fn too_large(size: u64) -> io::Error {
+    io::Error::other(format!("The file is {} MB. Marky opens files up to {} MB.", size.div_ceil(MB), MAX_OPEN_BYTES / MB))
+}
+
+/// The absolute, lexically normalised path (`.` and `..` removed), for deciding whether two opens
+/// name one file. Symlinks keep their own spelling and no disk access is needed.
+pub fn normalize(path: &Path) -> PathBuf {
+    std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
 /// Writes `text` (LF) back with the file's BOM and line ending. Returns the new mtime, so the
 /// watcher can tell our own save from another program's change.
 pub fn write(path: &Path, text: &str, meta: FileMeta) -> io::Result<u64> {
@@ -96,6 +113,7 @@ pub fn write_atomically(target: &Path, bytes: &[u8]) -> io::Result<()> {
     let dir = target
         .parent()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path has no parent folder"))?;
+    sweep_stale_temps(dir);
     let name = target.file_name().unwrap_or_default().to_string_lossy();
     // Unique per write, so two writes of one file in flight never share a temp file.
     let write_id = WRITES.fetch_add(1, Ordering::Relaxed);
@@ -106,6 +124,39 @@ pub fn write_atomically(target: &Path, bytes: &[u8]) -> io::Result<()> {
         let _ = fs::remove_file(&tmp);
     }
     result
+}
+
+/// A temp file older than this belonged to a save that never finished (the process died).
+const STALE_TEMP_AGE: Duration = Duration::from_secs(60 * 60);
+
+/// Removes temp files a crashed save left in `dir`: once per folder per session, and only when old
+/// enough that no save can still be using them. Best effort; a failed sweep must never fail a save.
+fn sweep_stale_temps(dir: &Path) {
+    static SWEPT: Mutex<Option<HashSet<PathBuf>>> = Mutex::new(None);
+    let Ok(mut swept) = SWEPT.lock() else { return };
+    if !swept.get_or_insert_with(HashSet::new).insert(dir.to_path_buf()) {
+        return;
+    }
+    drop(swept);
+
+    let Ok(entries) = fs::read_dir(dir) else { return };
+    let now = SystemTime::now();
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        if !(name.starts_with('.') && name.contains(".marky-") && name.ends_with(".tmp")) {
+            continue;
+        }
+        let stale = entry
+            .metadata()
+            .ok()
+            .and_then(|metadata| metadata.modified().ok())
+            .and_then(|modified| now.duration_since(modified).ok())
+            .is_some_and(|age| age > STALE_TEMP_AGE);
+        if stale {
+            let _ = fs::remove_file(entry.path());
+        }
+    }
 }
 
 /// Flushes before the swap, so a crash or power loss leaves the old file or the new one, never a torn one.
@@ -266,6 +317,33 @@ mod tests {
             let on_disk = fs::read_to_string(&path).unwrap();
             assert!(valid.contains(&on_disk), "round {round}: torn file ({} bytes)", on_disk.len());
         }
+    }
+
+    #[test]
+    fn normalizes_dot_components_so_one_file_is_one_path() {
+        assert_eq!(normalize(Path::new(r"C:\docs\sub\..\a.md")), PathBuf::from(r"C:\docs\a.md"));
+        assert_eq!(normalize(Path::new(r"C:\docs\.\a.md")), PathBuf::from(r"C:\docs\a.md"));
+    }
+
+    #[test]
+    fn sweeps_only_old_temp_files_once_per_folder() {
+        let stale_path = temp_path("sweep.md");
+        let stale_dir = stale_path.parent().unwrap();
+        let stale = stale_dir.join(".old.md.marky-1-1.tmp");
+        fs::write(&stale, b"partial").unwrap();
+        let file = fs::OpenOptions::new().write(true).open(&stale).unwrap();
+        file.set_modified(SystemTime::now() - Duration::from_secs(7200)).unwrap();
+        drop(file);
+        write(&stale_path, "hello\n", LF).unwrap();
+        assert!(!stale.exists(), "an hour-old temp file is swept by the next save");
+
+        let fresh_path = temp_path("sweep-fresh.md");
+        let fresh_dir = fresh_path.parent().unwrap();
+        let fresh = fresh_dir.join(".new.md.marky-2-1.tmp");
+        fs::write(&fresh, b"in flight").unwrap();
+        write(&fresh_path, "hello\n", LF).unwrap();
+        assert!(fresh.exists(), "a recent temp file may belong to a save in flight");
+        let _ = fs::remove_file(&fresh);
     }
 
     #[test]

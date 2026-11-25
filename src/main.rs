@@ -40,6 +40,8 @@ fn main() {
     let config_dir = settings::own_config_dir();
     let local_dir = settings::own_local_dir();
     let startup_arg = std::env::args().skip(1).find(|arg| !arg.is_empty() && !arg.starts_with('-')).map(PathBuf::from);
+    // Before the lock, so a failure to take it (only visible in a release build's log) is recorded.
+    diagnostics::init(&local_dir, env!("CARGO_PKG_VERSION"));
     let instance_lock = match instance::start(&config_dir) {
         Ok(instance::Start::Primary(file)) => Some(file),
         Ok(instance::Start::Secondary) => {
@@ -47,11 +49,12 @@ fn main() {
             return;
         }
         Err(err) => {
-            eprintln!("single instance unavailable: {err}");
+            let message = format!("single instance unavailable: {err}");
+            eprintln!("{message}");
+            diagnostics::write(&message);
             None
         }
     };
-    diagnostics::init(&local_dir, env!("CARGO_PKG_VERSION"));
     high_contrast::refresh();
     let recovery = store::read_snapshots(&local_dir);
     let geometry = store::load_window_geometry(&config_dir);

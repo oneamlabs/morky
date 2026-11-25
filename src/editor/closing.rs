@@ -9,7 +9,14 @@ impl Prototype {
     }
 
     pub(super) fn close_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
-        if self.tabs.len() == 1 || index >= self.tabs.len() {
+        if index >= self.tabs.len() {
+            return;
+        }
+        // The last tab is the window: Ctrl+W there asks to close it, as the shortcut table says.
+        if self.tabs.len() == 1 {
+            if self.may_close(window, cx) {
+                window.remove_window();
+            }
             return;
         }
         if !self.tabs.documents()[index].is_dirty() {
@@ -55,25 +62,27 @@ impl Prototype {
 
     /// The title-bar X and Quit both come here. Returns whether the window may close now.
     pub fn may_close(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        if self.tabs.iter().any(|doc| doc.save_task.is_some()) {
+        if self.tabs.iter().any(|doc| doc.save_task.is_some()) || self.settings_task.is_some() {
             self.close_after_saves(window, cx);
             return false;
         }
         let dirty = self.dirty_count();
         if dirty == 0 || self.close_confirmed {
             // A postponed recovery survives a normal close; with nothing left to recover, this clears it.
-            self.flush_recovery();
+            self.flush_geometry(window);
+            self.flush_recovery(cx);
             return true;
         }
         let message = if dirty == 1 { "Discard unsaved changes in 1 file?".to_string() } else { format!("Discard unsaved changes in {dirty} files?") };
-        self.confirm_discard(&message, window, cx, |this, window, _| {
+        self.confirm_discard(&message, window, cx, |this, window, cx| {
             // Discarding everything: nothing is left to recover, and held snapshots stay held.
             for document in this.tabs.documents_mut() {
                 document.restored = false;
                 document.buffer.mark_saved();
             }
             this.close_confirmed = true;
-            this.flush_recovery();
+            this.flush_geometry(window);
+            this.flush_recovery(cx);
             window.remove_window();
         });
         false
@@ -88,7 +97,11 @@ impl Prototype {
         self.close_task = Some(cx.spawn_in(window, async move |this, cx| {
             loop {
                 cx.background_executor().timer(Duration::from_millis(15)).await;
-                let Ok(saving) = this.update(cx, |this, _| this.tabs.documents().iter().any(|doc| doc.save_task.is_some())) else { return };
+                let Ok(saving) = this.update(cx, |this, _| {
+                    this.tabs.documents().iter().any(|doc| doc.save_task.is_some()) || this.settings_task.is_some()
+                }) else {
+                    return;
+                };
                 if !saving {
                     break;
                 }

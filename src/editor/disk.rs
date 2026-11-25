@@ -108,6 +108,9 @@ impl Prototype {
 
     /// Opens `path` as a tab, or switches to the tab that already has it.
     pub(super) fn open_path(&mut self, path: &Path, cx: &mut Context<Self>) {
+        // One spelling per file, so `c:\a\.\b.md` and `C:\a\b.md` reuse the same tab and watcher.
+        let normalized = files::normalize(path);
+        let path = normalized.as_path();
         if let Some(index) = self.tabs.iter().position(|doc| files::same_path(Path::new(&doc.path), path)) {
             self.record_recent(path, cx);
             self.activate_tab(index, cx);

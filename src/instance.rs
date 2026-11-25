@@ -62,7 +62,8 @@ pub fn take_request(dir: &Path) -> Option<Option<PathBuf>> {
     let request = request_path(dir);
     let text = fs::read_to_string(&request).ok()?;
     let _ = fs::remove_file(&request);
-    let text = text.trim();
+    // Only line endings are filler; a path may legitimately start or end with a space.
+    let text = text.trim_end_matches(['\r', '\n']);
     Some((!text.is_empty()).then(|| PathBuf::from(text)))
 }
 
@@ -95,6 +96,14 @@ mod tests {
         assert_eq!(take_request(&dir), None);
         forward(&dir, None).unwrap();
         assert_eq!(take_request(&dir), Some(None));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_forwarded_path_keeps_its_leading_space() {
+        let dir = temp_dir("request-space");
+        forward(&dir, Some(Path::new(r"C:\docs\ leading.md"))).unwrap();
+        assert_eq!(take_request(&dir), Some(Some(PathBuf::from(r"C:\docs\ leading.md"))));
         let _ = fs::remove_dir_all(&dir);
     }
 }

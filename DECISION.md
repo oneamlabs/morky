@@ -2,6 +2,48 @@
 
 Decisions about Marky that are not obvious from the code, with the reasons and the evidence behind them. Newest first. Each entry says what was decided, what else was considered, and what it costs; change one only with new evidence, and add a new entry rather than rewriting an old one.
 
+## 2026-11-25: Fixes from a fresh audit
+
+Context: a read-through of every module, script and workflow found a crash-recovery write-ordering race, two ways preview content disappeared (raw HTML, footnotes containing lists), and a set of smaller correctness, thread and documentation gaps. This entry records the choices where a later reader could reasonably pick differently.
+
+### Decision
+
+- **Raw HTML is shown as text.** `Event::Html` and `Event::InlineHtml` are pushed into the block's runs, and a standalone block becomes a paragraph, so `<div>…</div>` reads as written (never executed). This matches markdown-it's `html: false`.
+- **Frontmatter is a metadata block.** `Kind::Metadata` is rendered like a plain shaded block and is not run through inline rules, so YAML quotes and links are not rewritten.
+- **Footnote ownership is a field.** `Block::footnote: Option<u32>` marks every block of a definition (paragraphs, lists, code, quotes, tables), not only paragraphs. Gathering moves them all; only the last block that can draw runs gets the ↩ backlink. `block_at_line` searches only the body before the appended rule and notes.
+- **One ordered writer thread owns `recovery.json`.** Timer writes and the close flush are queued on a `std::sync::mpsc` channel; the flush carries an acknowledgement the closing thread waits on. FIFO order replaces the old detached tasks, which could rename an older snapshot after a newer one.
+- **Settings and window geometry are written off the UI thread.** Settings saves get a generation and a mutex so a slower older save cannot overwrite a newer one; closing waits for the task. Geometry is flushed synchronously on close so the debounced task cannot be lost with the view.
+- **Opened paths are normalised lexically** with `std::path::absolute` (`. ` and `..` removed); symlinks keep their own spelling. One file is one tab.
+- **Stale temp files are swept once per folder per session**, and only when older than an hour, so an interrupted save cannot accumulate while an in-flight write is safe.
+- **Outline is a virtualised `ListState`.** The arrow keys call `scroll_to_reveal_item`; only visible headings are built.
+- **Formatting stays by hand.** `make fmt` is removed and AGENTS.md says so: the code is deliberately not rustfmt-clean, and CI does not pretend otherwise.
+- **CI compiles the optional grammars.** A second test run uses `--all-features`, so `lang-rust`, `lang-c` and `lang-typescript` cannot rot unnoticed.
+
+### Options considered
+
+| Question | Chosen | Rejected, and why |
+| --- | --- | --- |
+| Raw HTML | Show as text | **Drop it** (before): silent content loss, and unlike markdown-it's `html: false`. **Render it**: the app has no HTML renderer and the privacy rule forbids one. |
+| Frontmatter | Metadata block | **Keep dropping it** (before): the old shell showed it and the project taste lists frontmatter. **Treat it as code**: wrong role and highlighted as a language it is not. |
+| Footnote gathering | Per-block ownership field | **Only `Kind::Footnote`** (before): lists and code stayed inline and references jumped nowhere. **One block per definition**: loses list/code/table rendering. |
+| Recovery ordering | One writer thread with an ordered channel and flush acknowledgement | **Detached tasks plus a generation counter**: a queued task could still be lost when the process exits. **Chain `Task`s and block on close**: the executor handle returned by `Context` has no `block_on` at this GPUI pin, and the pending task would need to be retained and awaited anyway. |
+| Settings writes | Background task with latest-generation gate | **Synchronous** (before): a `sync_all` on the UI thread on every toggle. **Fire and forget**: two quick changes could land out of order. |
+| Path identity | `std::path::absolute` | **`canonicalize`**: resolves symlinks, changes the displayed path, and costs disk access. **Keep raw strings** (before): duplicate tabs and watchers for one file. |
+| Formatting | Hand formatting, no target | **`rustfmt` everywhere**: 510 hunks across all 35 files, noise in every future diff. **Keep `make fmt`**: a target that rewrites the tree is a trap. |
+
+### Evidence
+
+- `cargo clippy --workspace --all-targets -- -D warnings` is clean; `cargo test --workspace` passes 140 tests (1 ignored helper).
+- Probes confirmed the old behaviour before the fix: `blocks("<div>hello</div>")` produced no block; `blocks("Text[^1].\n\n[^1]:\n    - a")` produced no `Kind::Footnote`; `block_at_line` returned the appended footnote for a body line; `find_all("İstanbul", "i")` was empty.
+- New tests cover raw HTML, frontmatter, footnote lists and line mapping, the Kelvin-sign fold, path normalisation, stale-temp sweeping, leading-space request paths, and uppercase link schemes.
+
+### Consequences
+
+- `Block` gains a field and `Kind` a variant; every block constructor and the preview's exhaustive matches carry them.
+- Recovery now has a dedicated thread for the life of the process; it holds only the channel receiver and idle memory is negligible.
+- A close can wait for one settings fsync; this is the same wait the old synchronous write imposed, moved off the typing path.
+- The `--all-features` CI step doubles the test build's grammar compilation; the default release build is unchanged.
+
 ## 2026-11-18: marky.exe carries its own icon
 
 Context: `assets/marky.ico` existed, but only `installer/marky.nsi` used it (`MUI_ICON`). The program had no icon resource: GPUI's `windows-manifest` feature links only `RT_MANIFEST` (its `crates/gpui/resources/windows/gpui.rc` is one line), and the Windows backend never sends `WM_SETICON`. So Explorer, the portable ZIP, Add/Remove Programs (`DisplayIcon` is `$INSTDIR\marky.exe`) and the `.md` association (`DefaultIcon` is `marky.exe,0`) all showed the generic application icon, and the taskbar fell back to the same.

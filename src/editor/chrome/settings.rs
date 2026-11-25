@@ -217,12 +217,22 @@ impl Prototype {
         }
     }
 
-    /// Saves the view settings and closes any menu. Every control in this panel ends here.
+    /// Saves the view settings and closes any menu. Every control in this panel ends here. The
+    /// write runs in the background, so a slow disk cannot stall the frame that changed a setting.
     pub(crate) fn keep_settings(&mut self, cx: &mut Context<Self>) {
-        if let Err(message) = crate::settings::save(&self.config_dir, &self.settings) {
-            self.report(message);
-        }
         self.open_menu = None;
+        let config_dir = self.config_dir.clone();
+        let settings = self.settings.clone();
+        self.settings_task = Some(cx.spawn(async move |this, cx| {
+            let result = cx.background_executor().spawn(async move { crate::settings::save(&config_dir, &settings) }).await;
+            let _ = this.update(cx, |this, cx| {
+                this.settings_task = None;
+                if let Err(message) = result {
+                    this.report(message);
+                }
+                cx.notify();
+            });
+        }));
         cx.notify();
     }
 }

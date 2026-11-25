@@ -305,13 +305,16 @@ try {
   Write-Check 'close with unsaved changes is held for the prompt' (-not $app.WaitForExit(2000))
   Stop-ProcessTree $app.Id
 
-  # ----- Run B: a clean window closes at once -----
+  # ----- Run B: File > Close Tab on the only (clean) tab closes the window -----
 
   $app = Start-Marky $fixture
   $window = Window-Of $app
   $ready = Wait-Until { (Title-Of $app) -eq 'fixture.md - Marky' } 30
-  if ($ready) { [E2e.Win]::Close($window) }
-  Write-Check 'clean window closes without a prompt' ($ready -and $app.WaitForExit(10000))
+  if ($ready) {
+    $script:ui = $A::FromHandle($window)
+    Run-Menu 'File' 'Close Tab' | Out-Null
+  }
+  Write-Check 'closing the last tab closes the clean window without a prompt' ($ready -and $app.WaitForExit(10000))
 
   # ----- Run B2: a launch without a file (the Start menu shortcut) opens an untitled tab -----
 

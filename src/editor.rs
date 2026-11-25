@@ -214,6 +214,8 @@ pub struct Prototype {
     frame_started: Option<Instant>,
     /// The last window bounds, written after a resize settles.
     geometry_task: Option<Task<()>>,
+    /// The settings write in flight; closing waits for it so the last change is on disk.
+    pub(super) settings_task: Option<Task<()>>,
     /// A close asked for while a save was still being written; it asks again once the save is done.
     close_task: Option<Task<()>>,
     _appearance: Subscription,
@@ -280,10 +282,14 @@ impl Prototype {
             painted_lines: Vec::new(),
             frame_started: None,
             geometry_task: None,
+            settings_task: None,
             close_task: None,
             _appearance: appearance,
             _bounds: bounds,
         };
+        if !this.settings.can_save() {
+            this.report("Settings could not be read; changes will not be saved".to_string());
+        }
         // The source paints first; the preview follows when the background parse is done, like the app.
         this.schedule_parse(0, Duration::ZERO, cx);
         this.watch_document(0, cx);
