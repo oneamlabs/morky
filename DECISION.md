@@ -2,6 +2,36 @@
 
 Decisions about Marky that are not obvious from the code, with the reasons and the evidence behind them. Newest first. Each entry says what was decided, what else was considered, and what it costs; change one only with new evidence, and add a new entry rather than rewriting an old one.
 
+## 2026-11-25: Node is dropped; notices come from xtask
+
+Context: `package.json`, `package-lock.json`, `tsconfig.scripts.json` and one 181-line TypeScript file existed only to generate `THIRD_PARTY_NOTICES.txt`. That made Node a development requirement and `npm audit` a CI step that could fail on the generator's own dependencies, unrelated to Marky.
+
+### Decision
+
+- **A new workspace member, `xtask`, generates the notices.** `cargo run -p xtask -- notices` runs `cargo metadata` and `cargo tree` (the same commands the TypeScript did), reads each crate's license files, groups identical texts, and writes the file. It uses `serde_json` and `regex`, both already in the lockfile.
+- **The output matches the old generator.** Package ids are sorted with `-` and `_` ignored (`localeCompare`'s primary weight), so `bit_field` stays before `bit-set` and `float-cmp` before `float_next`; license-file selection, MIT/BSD templates, author parsing and the 80-column rule are ported as-is. The only intended diff is the header's generator command and the order of a few shared-text groups.
+- **The Node files are deleted**: `package.json`, `package-lock.json`, `tsconfig.scripts.json`, `scripts/third-party-notices.ts`; `.gitignore` loses `node_modules/`. CI drops `setup-node`, `npm ci`, the `tsc` check and `npm audit`; it runs `cargo run -p xtask -- notices` and checks the diff. `release.ps1` only syncs `Cargo.lock` and the README badge now.
+- **`xtask` ships nothing.** It is a normal workspace member, so `cargo build --release --workspace` builds `xtask.exe` next to `marky.exe`; the installer, portable ZIP and size check only reference `marky.exe`.
+
+### Options considered
+
+| Question | Chosen | Rejected, and why |
+| --- | --- | --- |
+| Generator | An `xtask` workspace member | **Keep Node**: a second toolchain for one file, plus irrelevant npm advisories. **`cargo-about`**: needs installing in CI, its own config, and a different output. **A second `[[bin]]` in Marky**: mixes a build tool into the app package and makes `cargo build` produce an extra program. |
+| Output | Reproduce the old file | **Redesign the notices**: churn for no user benefit, and CI would diff a large rewrite. |
+| Workspace | Member, built by `--workspace` | **Standalone crate with its own lockfile**: a second lockfile to keep current; **excluded package**: `cargo run -p xtask` would not work from the root. |
+
+### Evidence
+
+- `cargo run -p xtask -- notices` regenerates the same 321 packages, 166 distinct license texts and 0 without a license file; the committed file changes only in the header and a few group positions.
+- `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace` pass with `xtask` in the workspace; the Marky program is unaffected and still 21.19 MB.
+
+### Consequences
+
+- `cargo build --release --workspace` builds a tool that is never packaged; it is small and not part of the size budgets.
+- `Cargo.lock` now records `xtask` and its two direct dependencies; none of them are linked into `marky.exe`.
+- Adding a dependency still requires regenerating the notices, now with `cargo run -p xtask -- notices` (`make notices`).
+
 ## 2026-11-25: The source editor is its own view
 
 Context: the last piece of the view split. The editor carries Windows text input, IME, the caret and accessibility, so it is the riskiest pane to move; the window also owns the buffer, undo, find matches and every editing rule.

@@ -13,7 +13,8 @@ name = "marky"
 path = "src/main.rs"
 
 [workspace]
-members = []
+# The notice generator, so the repository needs no Node toolchain. It ships nothing.
+members = ["xtask"]
 
 [build-dependencies]
 # Embeds assets/marky.ico as the program's icon (RT_GROUP_ICON). GPUI already builds against it

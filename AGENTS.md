@@ -73,20 +73,20 @@ Every line must read PASS or SKIP with a documented reason. Native dialogs block
 
 Every user-visible change adds a line under `## [Unreleased]` in `CHANGELOG.md` (Keep a Changelog headings: Added, Changed, Fixed, Removed, Security), written for users, not as a commit log. `release.ps1` refuses an empty Unreleased section and stamps it with the version and date; `release.yml` publishes that section as the release notes.
 
-Versions are plain `X.Y.Z`. `Cargo.toml` is the only source: `scripts/release.ps1` syncs `Cargo.lock`, `package.json` and `package-lock.json`. Never hand-edit versions or create tags directly. Create a release with `npm run release -- -Version X.Y.Z`, then push with `git push origin HEAD --follow-tags`. A pushed `vX.Y.Z` tag publishes a GitHub Release through `release.yml`, which first runs the whole of `ci.yml` on the tag and publishes the artifacts that run built and tested; never add a publish path that skips it. Suffixes such as `-beta.1` are rejected; NSIS and winget both prefer plain numbers.
+Versions are plain `X.Y.Z`. `Cargo.toml` is the only source: `scripts/release.ps1` syncs `Cargo.lock` and the README badge. Never hand-edit versions or create tags directly. Create a release with `./scripts/release.ps1 -Version X.Y.Z` (or `make release VERSION=X.Y.Z`), then push with `git push origin HEAD --follow-tags`. A pushed `vX.Y.Z` tag publishes a GitHub Release through `release.yml`, which first runs the whole of `ci.yml` on the tag and publishes the artifacts that run built and tested; never add a publish path that skips it. Suffixes such as `-beta.1` are rejected; NSIS and winget both prefer plain numbers.
 
 The installer is per-user NSIS (`installer/marky.nsi`), built by `scripts/build-installer.ps1`; it carries Marky, the licence and the notices, and registers the app with **Open with**. The portable ZIP carries the same files. Releases ship **unsigned** until a signing command is configured. Signing is route-agnostic: `scripts/sign.ps1` runs `MARKY_SIGN_COMMAND` (with a `{file}` placeholder), and `scripts/build-signed.ps1` builds, signs the program before the installer, signs the installer, then verifies every Authenticode signature. Keep certificates, credentials and the command in CI secrets only. winget manifests come from `scripts/winget-manifest.ps1` (schema 1.12.0, validated with `winget validate`).
 
 ## Dependencies and licensing
 
-Marky is MIT. After adding, removing or upgrading any Rust dependency, run `npm run notices` and commit the regenerated `THIRD_PARTY_NOTICES.txt`; CI fails if it is stale. The file ships in the installer and portable ZIP. Prefer MIT, Apache-2.0, BSD, ISC or Zlib dependencies. Flag anything copyleft (GPL, LGPL, AGPL) before adding it. GPUI is Apache-2.0 and pinned to one Zed commit (`Cargo.toml`); moving the pin needs a build, the tests and a startup measurement, and an entry in `DECISION.md`. Zed's own editor/markdown crates are GPL: read them, do not copy them.
+Marky is MIT. After adding, removing or upgrading any Rust dependency, run `cargo run -p xtask -- notices` (`make notices`) and commit the regenerated `THIRD_PARTY_NOTICES.txt`; CI fails if it is stale. The `xtask` workspace member reads `cargo metadata` and `cargo tree` and ships nothing. The file ships in the installer and portable ZIP. Prefer MIT, Apache-2.0, BSD, ISC or Zlib dependencies. Flag anything copyleft (GPL, LGPL, AGPL) before adding it. GPUI is Apache-2.0 and pinned to one Zed commit (`Cargo.toml`); moving the pin needs a build, the tests and a startup measurement, and an entry in `DECISION.md`. Zed's own editor/markdown crates are GPL: read them, do not copy them.
 
 ## Environment gotchas
 
 - Shells are PowerShell on Windows. Shells opened before Rust was installed can lack cargo on PATH; prepend `$env:USERPROFILE\.cargo\bin`.
 - `cargo run --release` without a path opens an Untitled tab, as the Start menu shortcut does; pass `scripts/fixtures/typical.md` (or use `make run`) for the fixture. Never default to a path from the build machine: `env!` paths are baked into the shipped program.
 - NSIS is needed for `build-installer.ps1`; CI installs it with Chocolatey. `makensis` from PATH or the standard NSIS install folders is used.
-- Node is only for regenerating notices; there is no frontend build, dev server or webview runtime to install.
+- There is no Node or frontend toolchain: notices come from the `xtask` workspace member (`cargo run -p xtask -- notices`), and `cargo build --release --workspace` builds it alongside Marky. Only `marky.exe` is packaged.
 
 ## Code style
 

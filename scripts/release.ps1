@@ -2,7 +2,7 @@
 .SYNOPSIS
   Bumps the version, commits, and creates the annotated tag vX.Y.Z. Does not push.
 .DESCRIPTION
-  Cargo.toml is the version source; package.json and Cargo.lock are kept in sync. CHANGELOG.md's Unreleased section is stamped with the version and date and must not be
+  Cargo.toml is the version source; Cargo.lock and the README badge are kept in sync. CHANGELOG.md's Unreleased section is stamped with the version and date and must not be
   empty. Pushing the tag triggers .github/workflows/release.yml, which runs the full CI workflow on
   the tag and publishes the installer it tested as a GitHub Release.
 .EXAMPLE
@@ -33,13 +33,6 @@ try {
   $cargoManifest = Get-Content Cargo.toml -Raw
   $cargoManifest = [regex]::Replace($cargoManifest, '(?m)^version = "[^"]+"', "version = `"$Version`"", 1)
   Set-Content Cargo.toml $cargoManifest -NoNewline
-  $package = Get-Content package.json -Raw | ConvertFrom-Json
-  $package.version = $Version
-  $package | ConvertTo-Json -Depth 10 | Set-Content package.json
-  $lock = Get-Content package-lock.json -Raw | ConvertFrom-Json -AsHashtable
-  $lock.version = $Version
-  if ($lock.packages -and $lock.packages['']) { $lock.packages[''].version = $Version }
-  $lock | ConvertTo-Json -Depth 100 | Set-Content package-lock.json
   # The README's badge is the version a reader sees first; keep it in step with Cargo.toml.
   $readme = Get-Content README.md -Raw
   $readme = [regex]::Replace($readme, '(?m)^\*\*v[^*]+\*\*', "**v$Version**", 1)
@@ -48,7 +41,7 @@ try {
   cargo update --offline -p marky --quiet
   if ($LASTEXITCODE -ne 0) { throw 'cargo update failed' }
 
-  git add Cargo.toml Cargo.lock package.json package-lock.json CHANGELOG.md README.md
+  git add Cargo.toml Cargo.lock CHANGELOG.md README.md
   git commit --quiet -m "Release $tag"
   git tag -a $tag -m "Marky $Version"
   Write-Host "Created $tag. Publish it with: git push origin HEAD --follow-tags"

@@ -46,7 +46,7 @@ clippy:
 check: clippy test
 
 notices:
-	npm run notices
+	$(CARGO) run -p xtask -- notices
 
 installer: build
 	$(PWSH) -NoProfile -File scripts/build-installer.ps1

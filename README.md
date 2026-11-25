@@ -67,7 +67,7 @@ The preview is one tab stop. With it focused, Left/Right select a link, Enter fo
 
 ## Development
 
-**Requirements:** Windows 10/11, Rust with the MSVC toolchain, and the C++ build tools. NSIS is needed only to build the installer; CI installs it with Chocolatey. Node.js is needed only to regenerate third-party notices.
+**Requirements:** Windows 10/11, Rust with the MSVC toolchain, and the C++ build tools. NSIS is needed only to build the installer; CI installs it with Chocolatey. There is no Node or frontend toolchain: notices come from the `xtask` crate.
 
 Built with [GPUI](https://gpui.rs/) from Zed's repository, [pulldown-cmark](https://docs.rs/pulldown-cmark), [ropey](https://docs.rs/ropey), [RaTeX](https://github.com/erweixin/RaTeX), [merman](https://github.com/Latias94/merman) and tree-sitter.
 
@@ -88,6 +88,7 @@ The same workflow is in the `Makefile`:
 ```bash
 make build
 make check
+make notices
 make installer
 make size
 make e2e
@@ -101,7 +102,7 @@ make release VERSION=0.4.0
 | `./scripts/check-size.ps1` | Enforce program and installer size budgets |
 | `./scripts/bench.ps1` | Measure startup, typing, preview and memory |
 | `./scripts/bench-large.ps1` | Measure 100 KB to 8 MB documents |
-| `npm run notices` | Regenerate notices after dependency changes |
+| `make notices` (`cargo run -p xtask -- notices`) | Regenerate notices after dependency changes |
 
 `scripts/e2e.ps1` drives the release build through Windows UI Automation and uses temporary `APPDATA`/`LOCALAPPDATA`, so it does not read or change your settings.
 
