@@ -130,7 +130,7 @@ fn main() {
     });
 }
 
-/// `canonicalize` on Windows prefixes `\\?\`, which the path bar should not show.
+/// `canonicalize` on Windows prefixes `\\?\`, which the status bar should not show.
 fn plain_path(path: PathBuf) -> PathBuf {
     let canonical = path.canonicalize().unwrap_or(path);
     let text = canonical.to_string_lossy();

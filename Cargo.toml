@@ -74,11 +74,12 @@ tree-sitter-toml-ng = { version = "0.7", optional = true }
 tree-sitter-typescript = { version = "0.23", optional = true }
 tree-sitter-yaml = { version = "0.7", optional = true }
 
-# One feature per highlighted language. Measured 6 Nov 2026: all twelve make the program 12.8 MB,
-# over the 12 MB hard limit. The compiled grammars cost about half their library size: TypeScript
-# and TSX ~2.9 MB, Bash ~1.4, Rust ~1.1, C ~0.7, Python ~0.5, the rest under 0.5 each. The default
-# leaves out TypeScript (its fences use the JavaScript grammar), C and Rust. Add one back with,
-# for example, `--features lang-rust`.
+# One feature per highlighted language. Measured 6 Nov 2026, before Mermaid joined the program: all
+# twelve add 12.8 MB, about half their library size: TypeScript and TSX ~2.9 MB, Bash ~1.4, Rust
+# ~1.1, C ~0.7, Python ~0.5, the rest under 0.5 each. The program budget is 24 MB hard / 22 MB
+# target (AGENTS.md), and the default nine grammars measure 21.07 MB, so leaving out TypeScript (its
+# fences use the JavaScript grammar), C and Rust keeps room under the limit. Add one back with, for
+# example, `--features lang-rust`, and re-measure the program size.
 [features]
 default = ["lang-bash", "lang-css", "lang-go", "lang-html", "lang-javascript", "lang-json", "lang-python", "lang-toml", "lang-yaml"]
 lang-bash = ["dep:tree-sitter-bash"]

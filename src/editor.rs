@@ -339,7 +339,7 @@ pub struct Prototype {
     find: Option<FindBar>,
     /// Where the caret was painted in the last frame. The IME places its candidate window here.
     caret_bounds: Option<Bounds<Pixels>>,
-    /// The last error or result, shown in the path bar: a release build has no console.
+    /// The last error or result, shown in the status bar: a release build has no console.
     status: Option<String>,
     window_title: String,
     /// Set once the user chose Discard, so the second close request goes through.

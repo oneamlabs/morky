@@ -37,7 +37,7 @@ fn text_pairs(dark: bool) -> Vec<(&'static str, u32, u32)> {
         ("quiet text on the preview", quiet, pick(0x09090b, 0xffffff)),
         ("the current heading in the outline", pick(0x60a5fa, 0x2563eb), pick(0x18181b, 0xf4f4f5)),
         ("links in the preview", pick(0x58a6ff, 0x0969da), pick(0x09090b, 0xffffff)),
-        ("errors on the path bar", pick(0xfca5a5, 0xb91c1c), pick(0x27272a, 0xe4e4e7)),
+        ("errors on the status bar", pick(0xfca5a5, 0xb91c1c), pick(0x27272a, 0xe4e4e7)),
         ("errors in the preview", pick(0xfca5a5, 0xb91c1c), pick(0x09090b, 0xffffff)),
         ("text on a selection", text, pick(0x1e3a8a, 0xbfdbfe)),
         ("text on a find match", text, pick(0x713f12, 0xfef08a)),

@@ -1,5 +1,5 @@
-//! The window's chrome around the panes: menus, toolbar, tabs, path bar, find bar, outline, settings
-//! panel and status bar.
+//! The window's chrome around the panes: menus, toolbar, tabs, find bar, outline, settings panel and
+//! status bar (which carries the document's path).
 //!
 //! Menu items, toolbar buttons and shortcuts all run a [`Command`], as the app's menus, toolbar and
 //! `SHORTCUTS` all go through its `commands` table. Every control can be reached from the keyboard
@@ -18,7 +18,6 @@ actions!(
         NewTab,
         SaveAs,
         OpenRecent,
-        ToggleAutoSave,
         CloseTab,
         NextTab,
         PreviousTab,
@@ -224,7 +223,6 @@ impl Prototype {
             .on_action(cx.listener(|this, _: &OpenFile, window, cx| this.run(Command::Open, window, cx)))
             .on_action(cx.listener(|this, _: &OpenRecent, window, cx| this.run(Command::OpenRecent, window, cx)))
             .on_action(cx.listener(|this, _: &SaveAs, window, cx| this.run(Command::SaveAs, window, cx)))
-            .on_action(cx.listener(|this, _: &ToggleAutoSave, window, cx| this.run(Command::ToggleAutoSave, window, cx)))
             .on_action(cx.listener(|this, _: &OpenSettings, window, cx| this.run(Command::Settings, window, cx)))
             .on_action(cx.listener(|this, _: &CloseTab, window, cx| this.run(Command::CloseTab, window, cx)))
             .on_action(cx.listener(|this, _: &NextTab, window, cx| this.run(Command::NextTab, window, cx)))
