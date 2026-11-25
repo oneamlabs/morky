@@ -4,6 +4,8 @@ Notable changes to Marky, newest first. The format follows [Keep a Changelog](ht
 
 ## [Unreleased]
 
+## [0.4.7] - 2026-11-26
+
 ### Added
 
 - The editor, preview and outline show a thin scrollbar when their content overflows.
