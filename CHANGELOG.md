@@ -4,6 +4,8 @@ Notable changes to Marky, newest first. The format follows [Keep a Changelog](ht
 
 ## [Unreleased]
 
+## [0.4.6] - 2026-11-25
+
 ### Added
 
 - YAML frontmatter now appears in the preview as a metadata block instead of disappearing.
