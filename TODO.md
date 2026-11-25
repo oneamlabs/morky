@@ -12,7 +12,7 @@ Done on 7 Nov 2026:
 
 ## Performance
 
-- [ ] Re-run `scripts/bench-large.ps1` at 8 MB to confirm the stalls are gone. The block comparison now runs on the parse thread, the old blocks are freed in the background, and images are freed from per-document lists. Unit tests pass; the benchmark has not been re-run. `bench-large.ps1` now has `-Via Messages`, so it can run without foregrounding the window; `type_ms` is not comparable that way, but `stall_ms` and `preview_ms` are.
+- [x] Re-run `scripts/bench-large.ps1` at 8 MB to confirm the stalls are gone. 25 Nov 2026, `-Via Messages`: no frame over 50 ms in the typing burst or with the preview catching up, start 507 ms, idle 149 MB, preview 812 ms (parse 653 ms). `type_ms` is not comparable with SendKeys that way, but `stall_ms` and `preview_ms` are.
 - [ ] Work out why GPUI draws later after a posted key than after a real one (`bench.ps1 -Via Messages`: p95 about 17 ms against 2.6 ms), and which of the two matches a person typing. The p95 is one display refresh. GPUI paces frames (`FramePacer`, `DrawCoordinator`, the vsync thread re-invalidating each window), and a posted `WM_KEYDOWN` enters the posted queue while SendKeys goes through the OS input queue; 50 ms key spacing is also three vsyncs, so posted keys can phase-lock to the refresh. Finish the trace before treating window messages as a typing measure.
 
 ## Performance audit (10 Nov 2026): what is left
@@ -25,8 +25,7 @@ formula layout capped per frame; one copy per source line. Measure each of the r
 
 ### Main thread
 
-- [ ] Split the window into views (source, preview, outline, status bar) and cache the preview and outline with `AnyView::cached`, so a keystroke redraws only the editor. Today `Prototype` is one view, and every keystroke rebuilds the menus, tabs, outline, visible preview blocks and status bar. Largest structural win; also the single-responsibility fix below.
-- [ ] Virtualise the outline (`uniform_list`): it builds one element per heading every frame.
+- [ ] Extract the source editor into its own view (and, if it pays, the status bar). The preview and outline are now cached child views, but the editor's list, chrome and status bar still rebuild in the window's render.
 - [ ] Draw a paragraph's text runs as one `StyledText`/`InteractiveText` instead of one `div` per word (`preview_view::styled_runs`). Keep boxes only for paragraphs with inline formulas or images, and keep links as accessibility nodes.
 - [ ] Cache the editor's and preview's accessibility text by buffer version, scroll top and selection; it is rebuilt every frame while any UI Automation client listens, with two `position_for_index` calls per character.
 - [ ] Find: a changed query still copies the whole document (`buffer.text()`) to search it; search the rope's chunks or a background snapshot instead.

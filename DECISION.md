@@ -2,6 +2,43 @@
 
 Decisions about Marky that are not obvious from the code, with the reasons and the evidence behind them. Newest first. Each entry says what was decided, what else was considered, and what it costs; change one only with new evidence, and add a new entry rather than rewriting an old one.
 
+## 2026-11-25: The preview and outline are cached child views
+
+Context: `TODO.md`'s largest structural item. `Prototype` was one view, so every keystroke rebuilt the menu bar, toolbar, tabs, outline, visible preview blocks and status bar. The preview and outline are the expensive parts and change only on a parse, a theme/font change or a tab switch.
+
+### Decision
+
+- **The preview and outline are `Entity` views** (`editor/preview_pane.rs`, `editor/outline_pane.rs`), placed by the window with `Entity::cached`. GPUI caches the rendered subtree until the entity calls `cx.notify()` (or its bounds/text style change), and a cached view is laid out from a supplied style rather than measured, so each is wrapped in a sized flex cell and given a relative fill.
+- **Views live on the window, not on `Document`**: `Prototype::views: HashMap<u64, TabViews>`, keyed by document id. `Document` stays free of GPUI entities, so its unit tests still need no `App`. Each tab keeps its own preview scroll, link selection and outline scroll.
+- **The parent feeds content and look**: a parse hands the pane its new blocks, links and changed range; a theme/font change updates every pane; Save As updates the folder; a reload clears both panes. The outline receives the heading under the caret and is notified only when that index changes.
+- **Actions go back through a `WeakEntity<Prototype>`**: preview links and outline jumps call the window, which owns the app's link rules and focus. In-preview anchors (`#fn:`, `#fnref:`, other `#`) are handled inside the pane and never reach the window.
+- **Cache invalidation is explicit**: wheel scrolling, focus changes, a11y activation, theme/font/folder changes and parse results all notify the pane. A11y and focus need this because their state is not part of the parent's render.
+- **The outline stays a `ListState`** inside its view, so arrow-key navigation still calls `scroll_to_reveal_item`.
+
+### Options considered
+
+| Question | Chosen | Rejected, and why |
+| --- | --- | --- |
+| Number of views | Preview and outline only; editor and chrome stay in the window | **Extract everything now**: the editor carries the input handler, IME, caret and a11y, and is a much larger change. **Keep one view**: every keystroke still rebuilds both expensive panes. |
+| Where the views live | A map on `Prototype` keyed by document id | **Fields on `Document`**: `Document` would need `App` in every test and would mix UI into the parse model. **One shared pane**: loses per-tab scroll and selection. |
+| Parent callbacks | `WeakEntity<Prototype>` in each pane | **Events plus subscriptions**: more plumbing for a single-window app, and the subscriptions would sit beside the views anyway. |
+| Cache style | Relative fill inside a sized wrapper | **Absolute pane sizes**: would not follow window resizes. **Uncached children**: no win, since the parent render still runs. |
+| Cache busting | Explicit `cx.notify` from parse/look/focus/scroll/a11y paths | **Cache the parent too**: the editor has to redraw every keystroke. **Let GPUI infer**: it only invalidates on entity notify or bounds/text-style change, so focus rings and wheel scrolling would freeze. |
+
+### Evidence
+
+- `cargo clippy --workspace --all-targets -- -D warnings` clean; `cargo test --workspace` 140 passed, 1 ignored.
+- `scripts/e2e.ps1`: 44 pass, 4 documented skips, 0 fail, including preview text pattern, preview link keyboard navigation, outline headings, focus order and the last-tab close.
+- `bench.ps1` on 25 Nov 2026 after the split: start 469 ms, 17.8 MB after 10 s, typing 1.8 / 3.0 ms p50/p95, preview 33 ms, program 21.18 MB. All within noise of the previous run.
+- `bench-large.ps1 -Via Messages` at 8 MB (25 Nov 2026): start 507 ms, 149 MB idle, **no frame over 50 ms** in the typing burst or with the preview catching up, preview 812 ms (parse 653 ms). This closes the open 8 MB re-run in `TODO.md`.
+
+### Consequences
+
+- A pane that changes visible state must notify itself or its cached subtree is stale. The new views subscribe to focus and list scrolling, and the window notifies them when AccessKit turns on.
+- The window's render still builds the editor, chrome and status bar; extracting the editor is the remaining item in `TODO.md`.
+- `preview_view` now renders for a `PreviewHost` (the pane), not for `Prototype` directly; any future pane hosting preview blocks implements that one method.
+- An image saved next to a document after the preview was built now appears on the next pane redraw (scroll, edit, theme change) rather than within two seconds: `cached_local_image`'s expiry is only consulted when the pane renders. High-contrast switches do notify both panes, so the system palette still applies immediately.
+
 ## 2026-11-25: Fixes from a fresh audit
 
 Context: a read-through of every module, script and workflow found a crash-recovery write-ordering race, two ways preview content disappeared (raw HTML, footnotes containing lists), and a set of smaller correctness, thread and documentation gaps. This entry records the choices where a later reader could reasonably pick differently.

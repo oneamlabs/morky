@@ -28,18 +28,18 @@ Release-build measurements on an i5-9300H with 16 GB RAM, using `scripts/fixture
 | Metric | Measured | Target | Hard limit |
 | --- | ---: | ---: | ---: |
 | Installer | 6.30 MB | ≤ 6 MB | 10 MB |
-| Program (`marky.exe`) | 21.12 MB | ≤ 22 MB | 24 MB |
+| Program (`marky.exe`) | 21.18 MB | ≤ 22 MB | 24 MB |
 | Portable ZIP | 8.78 MB | — | — |
-| Startup, ready to edit | 430 ms | ≤ 900 ms | 1,000 ms |
-| Typing | 1.8 ms p50 / 2.7 ms p95 | ≤ 20 ms | 33 ms |
-| Preview after typing stops | 32 ms | ≤ 200 ms | 400 ms |
-| Memory, 10 s after launch | 17.5 MB | ≤ 35 MB | 60 MB |
+| Startup, ready to edit | 469 ms | ≤ 900 ms | 1,000 ms |
+| Typing | 1.8 ms p50 / 3.0 ms p95 | ≤ 20 ms | 33 ms |
+| Preview after typing stops | 33 ms | ≤ 200 ms | 400 ms |
+| Memory, 10 s after launch | 17.8 MB | ≤ 35 MB | 60 MB |
 
 The program grew to accommodate all Mermaid diagram types in one executable; the accepted reasons are in [DECISION.md](DECISION.md). The installer is 6.30 MB, 0.30 MB over its 6 MB target and under the 10 MB hard limit.
 
-`bench.ps1` was re-run on 25 Nov 2026 after formulas and diagrams were given one shared SVG rasteriser and the editor was split into modules; every figure stayed within noise. The portable ZIP figure is from 7 Nov 2026 and has not been re-measured.
+`bench.ps1` was re-run on 25 Nov 2026 after the preview and outline became cached child views (and earlier after formulas and diagrams shared one SVG rasteriser and the editor was split into modules); every figure stayed within noise. The installer and portable ZIP figures are from before those code changes and have not been re-measured.
 
-Large-file numbers from the migration prototype (`scripts/bench-large.ps1`, 7 Nov 2026) are in [docs/gpui-migration.md](docs/gpui-migration.md). Re-measure them before changing preview or editor layout.
+Large-file numbers from the migration prototype (`scripts/bench-large.ps1`, 7 Nov 2026) are in [docs/gpui-migration.md](docs/gpui-migration.md). After the view split, `bench-large.ps1 -Via Messages` at 8 MB (25 Nov 2026) measured a 507 ms start, 149 MB idle, no frame over 50 ms while typing or with the preview catching up, and an 812 ms preview (653 ms parse); typing latency from posted keys is not comparable with SendKeys.
 
 ## Keyboard shortcuts
 
