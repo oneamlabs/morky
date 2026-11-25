@@ -60,10 +60,9 @@ formula layout capped per frame; one copy per source line. Measure each of the r
 
 ### Code structure
 
-- [ ] Rename `Prototype` (it is the app's window now) and split `editor.rs` (about 2,600 lines) by subsystem: documents and saving, find, recovery, panes.
+- [ ] Rename `Prototype` (it is the app's window now). `editor.rs` is already split by subsystem.
 - [ ] One set of UTF-16 offset helpers for the editor and `text_field.rs`.
 - [ ] Shorten the longest functions: `render_line`, the accessibility closure in `editor_column`, `restore_or_discard`, `preview::blocks_with`, `settings_panel`.
-- [ ] Name the settings panel's focus handles with an enum instead of `settings_controls[10]`.
 
 ## Editor and preview
 

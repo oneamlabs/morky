@@ -41,13 +41,18 @@ jobs:
       - name: Rust tests (files, store, watcher, editor, preview, contrast)
         run: cargo test --workspace
 
+      # The release build uses the default grammars. This compiles and tests the optional ones
+      # (`lang-rust`, `lang-c`, `lang-typescript`), whose cfg branches CI would otherwise never see.
+      - name: Rust tests with every optional grammar
+        run: cargo test --workspace --all-features
+
       - name: Third-party notices are up to date
         run: |
           npm run notices
           git diff --exit-code THIRD_PARTY_NOTICES.txt
 
       - name: Audit npm dependencies
-        run: npm audit
+        run: npm audit --audit-level=high
 
       - name: Build release program
         run: cargo build --release --workspace

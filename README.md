@@ -2,14 +2,14 @@
 
 Marky is a fast Markdown editor for Windows, written in Rust with [GPUI](https://gpui.rs/). It has no WebView2 or bundled browser: the window, editor, preview and menus are drawn with DirectX 11, and a typical document idles around 18 MB.
 
-**v0.4.0** · [Download a release](https://github.com/vikasdfghjl/marky/releases) · [Changelog](CHANGELOG.md) · [Contributor guide](AGENTS.md)
+**v0.4.5** · [Download a release](https://github.com/vikasdfghjl/marky/releases) · [Changelog](CHANGELOG.md) · [Contributor guide](AGENTS.md)
 
 ## Features
 
 - **Editing:** syntax highlighting, lists that continue on Enter, find and replace, word wrap, tabs with separate undo histories, drag and drop, opening from Explorer or the command line, ten recent files, and a remembered window size and position. Saves keep the file's BOM and line endings.
-- **Preview:** scrolling stays in step with the editor, and only changed blocks are replaced. Tables, task lists, strikethrough, autolinks, footnotes, definition lists, abbreviations, subscript, superscript, marked text, curly quotes and dashes, Mermaid diagrams, and math.
+- **Preview:** scrolling stays in step with the editor, and only changed blocks are replaced. Tables, task lists, strikethrough, autolinks, footnotes, definition lists, abbreviations, frontmatter metadata, subscript, superscript, marked text, curly quotes and dashes, Mermaid diagrams, and math.
 - **File safety:** atomic saves, prompts before discarding unsaved changes, reload or keep when the file changes on disk, auto-save, and crash recovery every 30 seconds. Files over 128 MB are refused before they are read.
-- **Privacy:** Markdown HTML is not rendered. Remote images do not load. Web and mail links open outside the app; relative links open only Markdown and text files next to the document.
+- **Privacy:** Markdown HTML is never rendered or executed; it shows as text. Remote images do not load. Web and mail links open outside the app; relative links open only existing Markdown and text files.
 - **Interface:** light, dark or system theme, high-contrast support, drawn menus, outline, reading view, and a status bar with line, word, character, encoding and line-ending details.
 - **Accessibility:** the editor exposes its text and caret to Windows UI Automation; the preview can be read by character, word and line; menus have underlined access keys; the settings panel keeps keyboard focus; links are one preview tab stop rather than many.
 

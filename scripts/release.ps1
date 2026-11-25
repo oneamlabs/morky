@@ -40,11 +40,15 @@ try {
   $lock.version = $Version
   if ($lock.packages -and $lock.packages['']) { $lock.packages[''].version = $Version }
   $lock | ConvertTo-Json -Depth 100 | Set-Content package-lock.json
+  # The README's badge is the version a reader sees first; keep it in step with Cargo.toml.
+  $readme = Get-Content README.md -Raw
+  $readme = [regex]::Replace($readme, '(?m)^\*\*v[^*]+\*\*', "**v$Version**", 1)
+  Set-Content README.md $readme -NoNewline
 
   cargo update --offline -p marky --quiet
   if ($LASTEXITCODE -ne 0) { throw 'cargo update failed' }
 
-  git add Cargo.toml Cargo.lock package.json package-lock.json CHANGELOG.md
+  git add Cargo.toml Cargo.lock package.json package-lock.json CHANGELOG.md README.md
   git commit --quiet -m "Release $tag"
   git tag -a $tag -m "Marky $Version"
   Write-Host "Created $tag. Publish it with: git push origin HEAD --follow-tags"
