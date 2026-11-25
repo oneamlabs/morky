@@ -6,6 +6,52 @@
 
 use super::*;
 
+/// The recovery state: where snapshots live, any held until the user answers, and what the last
+/// write contained so an unchanged document is not serialised again.
+pub(super) struct Recovery {
+    dir: PathBuf,
+    /// Snapshots held because the user chose Cancel; written back with the next snapshot and on close.
+    held: Vec<store::Snapshot>,
+    task: Option<Task<()>>,
+    /// Document ids and buffer versions in the last write.
+    versions: Vec<(u64, u64)>,
+    /// Whether the held snapshots changed since the last write; covers `versions` alone missing it.
+    dirty: bool,
+}
+
+impl Recovery {
+    pub(super) fn new(dir: PathBuf) -> Self {
+        // `dirty` starts true so the first tick writes even when nothing is dirty yet.
+        Self { dir, held: Vec::new(), task: None, versions: Vec::new(), dirty: true }
+    }
+
+    /// Holds `snapshots` until the user answers; they go out with the next write.
+    pub(super) fn hold(&mut self, snapshots: Vec<store::Snapshot>) {
+        self.held = snapshots;
+        self.dirty = true;
+    }
+
+    /// Records the task writing snapshots, so it lives as long as the window does.
+    pub(super) fn set_task(&mut self, task: Task<()>) {
+        self.task = Some(task);
+    }
+
+    /// What the next write holds, or `None` when no buffer version and no held snapshot changed
+    /// since the last one: serialising every dirty document is itself a cost at 8 MB.
+    pub(super) fn take_changes(&mut self, versions: Vec<(u64, u64)>, documents: Vec<(Option<String>, ropey::Rope, FileMeta)>) -> Option<RecoveryWrite> {
+        if !self.dirty && versions == self.versions {
+            return None;
+        }
+        self.versions = versions;
+        self.dirty = false;
+        Some(RecoveryWrite { held: self.held.clone(), documents })
+    }
+
+    pub(super) fn dir(&self) -> &Path {
+        &self.dir
+    }
+}
+
 impl Prototype {
     /// The app's recovery prompt. Yes restores the tabs, No deletes the snapshots (an explicit
     /// Discard), and Cancel holds them: they are written back with the next snapshot and on close.
@@ -51,47 +97,41 @@ impl Prototype {
                 self.activate_tab(self.tabs.len() - 1, cx);
             }
             rfd::MessageDialogResult::No => {
-                if let Err(err) = store::clear_snapshots(&self.recovery_dir) {
+                if let Err(err) = store::clear_snapshots(self.recovery.dir()) {
                     diagnostics::write(&format!("could not clear recovery snapshots: {err}"));
                 }
             }
-            _ => {
-                self.held_recovery = recovery;
-                self.recovery_dirty = true;
-            }
+            _ => self.recovery.hold(recovery),
         }
     }
 
     pub(super) fn start_recovery_timer(&mut self, cx: &mut Context<Self>) {
-        self.recovery_task = Some(cx.spawn(async move |this, cx| loop {
+        let task = cx.spawn(async move |this, cx| loop {
             cx.background_executor().timer(Duration::from_secs(30)).await;
             if this.update(cx, |this, cx| this.write_recovery(cx)).is_err() {
                 break;
             }
-        }));
+        });
+        self.recovery.set_task(task);
     }
 
-    /// What the next recovery write holds, or `None` when no buffer version and no held snapshot
-    /// changed since the last one: serialising every dirty document is itself a cost at 8 MB.
-    fn take_recovery_changes(&mut self) -> Option<RecoveryWrite> {
-        let versions = self.tabs.dirty_versions();
-        if !self.recovery_dirty && versions == self.recovery_versions {
-            return None;
-        }
-        self.recovery_versions = versions;
-        self.recovery_dirty = false;
-        let documents = self
-            .tabs
+    /// The dirty documents as cheap rope snapshots, for the next write.
+    fn recovery_documents(&self) -> Vec<(Option<String>, ropey::Rope, FileMeta)> {
+        self.tabs
             .iter()
             .filter(|doc| doc.is_dirty())
             .map(|doc| ((!doc.path.is_empty()).then(|| doc.path.clone()), doc.buffer.snapshot(), doc.meta))
-            .collect();
-        Some(RecoveryWrite { held: self.held_recovery.clone(), documents })
+            .collect()
+    }
+
+    fn take_recovery_changes(&mut self) -> Option<RecoveryWrite> {
+        let (versions, documents) = (self.tabs.dirty_versions(), self.recovery_documents());
+        self.recovery.take_changes(versions, documents)
     }
 
     fn write_recovery(&mut self, cx: &mut Context<Self>) {
         let Some(changes) = self.take_recovery_changes() else { return };
-        let dir = self.recovery_dir.clone();
+        let dir = self.recovery.dir().to_path_buf();
         cx.background_spawn(async move {
             if let Err(err) = changes.write(&dir) {
                 diagnostics::write(&format!("could not save recovery snapshots: {err}"));
@@ -103,8 +143,57 @@ impl Prototype {
     /// Synchronous, for closing: a background write could be lost when the process ends.
     pub(super) fn flush_recovery(&mut self) {
         let Some(changes) = self.take_recovery_changes() else { return };
-        if let Err(err) = changes.write(&self.recovery_dir) {
+        if let Err(err) = changes.write(self.recovery.dir()) {
             diagnostics::write(&format!("could not save recovery snapshots on close: {err}"));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn snap(path: Option<&str>) -> store::Snapshot {
+        store::Snapshot { path: path.map(Into::into), text: "x".into(), meta: FileMeta { bom: false, line_ending: files::LineEnding::Lf } }
+    }
+
+    /// The first write always happens: a launch with nothing dirty still clears a stale file.
+    #[test]
+    fn the_first_write_always_happens() {
+        let mut recovery = Recovery::new(PathBuf::from("."));
+        assert!(recovery.take_changes(Vec::new(), Vec::new()).is_some());
+    }
+
+    /// A second write with nothing changed is skipped: this is the 30 s timer's whole point.
+    #[test]
+    fn an_unchanged_write_is_skipped() {
+        let mut recovery = Recovery::new(PathBuf::from("."));
+        assert!(recovery.take_changes(vec![(1, 5)], Vec::new()).is_some());
+        assert!(recovery.take_changes(vec![(1, 5)], Vec::new()).is_none());
+        // A new buffer version means something changed.
+        assert!(recovery.take_changes(vec![(1, 6)], Vec::new()).is_some());
+    }
+
+    /// Holding snapshots counts as a change even when no buffer moved.
+    #[test]
+    fn holding_snapshots_forces_a_write() {
+        let mut recovery = Recovery::new(PathBuf::from("."));
+        assert!(recovery.take_changes(Vec::new(), Vec::new()).is_some());
+        assert!(recovery.take_changes(Vec::new(), Vec::new()).is_none());
+        recovery.hold(vec![snap(None)]);
+        let changes = recovery.take_changes(Vec::new(), Vec::new()).expect("held snapshots are a change");
+        assert_eq!(changes.held.len(), 1);
+    }
+
+    #[test]
+    fn held_snapshots_are_carried_into_each_write() {
+        let mut recovery = Recovery::new(PathBuf::from("."));
+        recovery.hold(vec![snap(Some(r"C:\a.md"))]);
+        let changes = recovery.take_changes(Vec::new(), Vec::new()).unwrap();
+        assert_eq!(changes.held[0].path.as_deref(), Some(r"C:\a.md"));
+        // Still held: a later write, forced by a version change, carries them again.
+        recovery.hold(Vec::new());
+        let changes = recovery.take_changes(vec![(1, 1)], Vec::new()).unwrap();
+        assert!(changes.held.is_empty());
     }
 }

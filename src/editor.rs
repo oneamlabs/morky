@@ -90,6 +90,7 @@ mod recovery;
 mod tabs;
 
 pub use chrome::*;
+use recovery::Recovery;
 use tabs::Tabs;
 
 /// CodeMirror's default indent unit, which Tab adds and Shift+Tab removes (the app binds `indentWithTab`).
@@ -385,14 +386,9 @@ pub struct Prototype {
     recent: Vec<PathBuf>,
     recent_open: bool,
     recent_focus: FocusHandle,
-    /// Crash-recovery snapshots, and the snapshots held until the user restores or discards them.
-    recovery_dir: PathBuf,
-    held_recovery: Vec<store::Snapshot>,
-    recovery_task: Option<Task<()>>,
-    /// Document ids and buffer versions in the last recovery write, so an unchanged dirty document
-    /// is not serialised again every 30 seconds. `recovery_dirty` covers held snapshots changing.
-    recovery_versions: Vec<(u64, u64)>,
-    recovery_dirty: bool,
+    /// Crash-recovery snapshots: where they live, any held until the user answers, and what the
+    /// last write contained.
+    recovery: Recovery,
     /// Watches `open-request.txt`, written by a second launch.
     request_watcher: Option<notify::RecommendedWatcher>,
     /// The single-instance lock; held for the window's lifetime.
@@ -470,11 +466,7 @@ impl Prototype {
             recent: store::load_recent(&config_dir).into_iter().filter(|path| path.is_file()).collect(),
             recent_open: false,
             recent_focus: cx.focus_handle(),
-            recovery_dir,
-            held_recovery: Vec::new(),
-            recovery_task: None,
-            recovery_versions: Vec::new(),
-            recovery_dirty: true,
+            recovery: Recovery::new(recovery_dir),
             request_watcher: None,
             _instance_lock: instance_lock,
             tab_leaves: false,
