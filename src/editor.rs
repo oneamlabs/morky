@@ -124,7 +124,7 @@ fn parse_pause(last_parse_ms: f64) -> Duration {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum OpenMenu {
+pub(super) enum OpenMenu {
     File,
     Edit,
     View,
