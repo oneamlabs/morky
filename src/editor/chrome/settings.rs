@@ -233,6 +233,8 @@ impl Prototype {
                 cx.notify();
             });
         }));
+        // A changed setting can reveal a cached pane (the outline, the preview), so repaint them.
+        self.notify_views(cx);
         cx.notify();
     }
 }

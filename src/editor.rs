@@ -93,6 +93,7 @@ mod lists;
 mod outline_pane;
 mod preview_pane;
 mod recovery;
+mod source_pane;
 mod tabs;
 mod window;
 
@@ -103,6 +104,7 @@ use drag::Drag;
 use outline_pane::OutlinePane;
 use preview_pane::PreviewPane;
 use recovery::Recovery;
+use source_pane::SourcePane;
 use tabs::Tabs;
 
 /// CodeMirror's default indent unit, which Tab adds and Shift+Tab removes (the app binds `indentWithTab`).
@@ -201,6 +203,8 @@ pub struct Prototype {
     menu_root: FocusHandle,
     /// The preview and outline views of each open document, keyed by document id.
     views: HashMap<u64, TabViews>,
+    /// The source editor's view, shared by every tab.
+    source: Option<Entity<SourcePane>>,
     /// Whether AccessKit was active last frame, so a change can invalidate the cached panes.
     a11y_active: bool,
     /// Lines laid out this frame, shared with the accessibility callback, which needs their bounds
@@ -283,6 +287,7 @@ impl Prototype {
             menu_focus: (0..MENU_ITEMS).map(|_| cx.focus_handle()).collect(),
             menu_root: cx.focus_handle(),
             views: HashMap::new(),
+            source: None,
             a11y_active: false,
             prepaint_lines: Rc::new(RefCell::new(Vec::new())),
             settings_focus: cx.focus_handle(),
@@ -306,6 +311,7 @@ impl Prototype {
         if !this.settings.can_save() {
             this.report("Settings could not be read; changes will not be saved".to_string());
         }
+        this.open_source(cx);
         this.open_views(0, cx);
         // The source paints first; the preview follows when the background parse is done, like the app.
         this.schedule_parse(0, Duration::ZERO, cx);
@@ -338,6 +344,22 @@ impl Prototype {
 
     fn active_views(&self) -> Option<&TabViews> {
         self.views.get(&self.tabs.active_doc().id)
+    }
+
+    /// Creates the source view once, after the window exists. Its focus handle is the window's
+    /// editor handle, so existing focus paths keep working.
+    fn open_source(&mut self, cx: &mut Context<Self>) {
+        let app = cx.entity().downgrade();
+        let focus = self.focus.clone();
+        self.source = Some(cx.new(|cx| SourcePane::new(app, focus, cx)));
+    }
+
+    /// The source view inside a wrapper that owns the editing-key handlers. The wrapper is an
+    /// ancestor of the editor only, so Backspace in the find field cannot reach the document.
+    fn editor_area(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let Some(source) = &self.source else { return div().into_any_element() };
+        let source = source.clone();
+        self.editor_actions(div().flex().flex_1().min_w(px(0.)).h_full().child(source), cx).into_any_element()
     }
 
     /// The active document's preview, filling the flex row. Cached until the pane is notified.
@@ -542,7 +564,7 @@ impl Render for Prototype {
             .min_h_0()
             .on_mouse_down(MouseButton::Left, cx.listener(Self::close_menu))
             .when(show_outline, |row| row.child(self.outline_area(cx)))
-            .when(show_editor, |row| row.child(self.editor_column(window, cx)))
+            .when(show_editor, |row| row.child(self.editor_area(cx)))
             .when(show_preview, |row| row.child(self.preview_area(cx)))
             .when(self.recent_open, |row| row.child(self.recent_panel(cx)))
             .when(self.settings_open, |row| row.child(self.settings_panel(cx)));
