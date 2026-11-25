@@ -478,7 +478,7 @@ impl Prototype {
         window.focus(&self.focus, cx);
         self.open_menu = None;
         let offset = self.offset_at(line, layout, event.position);
-        self.dragging = true;
+        self.drag.start();
         match event.click_count {
             2 => {
                 let word = self.doc().buffer.word_at(offset);

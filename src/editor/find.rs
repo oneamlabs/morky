@@ -85,8 +85,8 @@ impl Prototype {
     fn search_from_caret(&mut self, cx: &mut Context<Self>) {
         self.refresh_matches(cx);
         let from = self.doc().selected.start;
-        let matches = self.matches();
-        let Some(found) = matches.iter().find(|found| found.start >= from).or(matches.first()).cloned() else {
+        let found = next_match_from(self.matches(), from);
+        let Some(found) = found else {
             cx.notify();
             return;
         };
@@ -96,13 +96,8 @@ impl Prototype {
     pub(super) fn find_step(&mut self, direction: isize, cx: &mut Context<Self>) {
         self.refresh_matches(cx);
         let selected = self.doc().selected.clone();
-        let matches = self.matches();
-        let found = if direction > 0 {
-            matches.iter().find(|found| found.start >= selected.end && **found != selected).or(matches.first())
-        } else {
-            matches.iter().rev().find(|found| found.end <= selected.start).or(matches.last())
-        };
-        let Some(found) = found.cloned() else { return };
+        let found = step_match(self.matches(), &selected, direction);
+        let Some(found) = found else { return };
         self.select(found, cx);
     }
 
@@ -139,5 +134,72 @@ impl Prototype {
         }
         self.edit(span, &replaced, EditKind::Other, cx);
         self.status = Some(format!("Replaced {} matches", matches.len()));
+    }
+}
+
+/// The first match starting at or after `from`, wrapping to the first match when there is none.
+/// While a query is typed, the caret stays where it is and the nearest match ahead is selected.
+fn next_match_from(matches: &[Range<usize>], from: usize) -> Option<Range<usize>> {
+    matches.iter().find(|found| found.start >= from).or(matches.first()).cloned()
+}
+
+/// The match after `selected` in `direction`, wrapping at either end. Forward skips the current
+/// match (it starts before the selection's end); backward takes the nearest that ends before the
+/// selection starts.
+fn step_match(matches: &[Range<usize>], selected: &Range<usize>, direction: isize) -> Option<Range<usize>> {
+    let found = if direction > 0 {
+        matches.iter().find(|found| found.start >= selected.end && **found != *selected).or(matches.first())
+    } else {
+        matches.iter().rev().find(|found| found.end <= selected.start).or(matches.last())
+    };
+    found.cloned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn matches() -> Vec<Range<usize>> {
+        vec![0..3, 10..13, 20..23]
+    }
+
+    #[test]
+    fn typing_a_query_selects_the_first_match_from_the_caret() {
+        assert_eq!(next_match_from(&matches(), 0), Some(0..3));
+        assert_eq!(next_match_from(&matches(), 5), Some(10..13));
+        assert_eq!(next_match_from(&matches(), 20), Some(20..23));
+        // Past the last match it wraps.
+        assert_eq!(next_match_from(&matches(), 99), Some(0..3));
+        assert_eq!(next_match_from(&[], 0), None);
+    }
+
+    #[test]
+    fn stepping_forward_moves_past_the_selection_and_wraps() {
+        assert_eq!(step_match(&matches(), &(0..3), 1), Some(10..13));
+        assert_eq!(step_match(&matches(), &(10..13), 1), Some(20..23));
+        assert_eq!(step_match(&matches(), &(20..23), 1), Some(0..3));
+        // A caret with no selection steps to the match after it.
+        assert_eq!(step_match(&matches(), &(4..4), 1), Some(10..13));
+    }
+
+    #[test]
+    fn stepping_back_moves_before_the_selection_and_wraps() {
+        assert_eq!(step_match(&matches(), &(20..23), -1), Some(10..13));
+        assert_eq!(step_match(&matches(), &(10..13), -1), Some(0..3));
+        assert_eq!(step_match(&matches(), &(0..3), -1), Some(20..23));
+    }
+
+    #[test]
+    fn stepping_with_no_matches_does_nothing() {
+        assert_eq!(step_match(&[], &(0..0), 1), None);
+        assert_eq!(step_match(&[], &(0..0), -1), None);
+    }
+
+    /// A single match is both the next and the previous one, so stepping stays on it.
+    #[test]
+    fn a_single_match_stays_selected() {
+        let one = std::slice::from_ref(&(5..8));
+        assert_eq!(step_match(one, &(5..8), 1), Some(5..8));
+        assert_eq!(step_match(one, &(5..8), -1), Some(5..8));
     }
 }

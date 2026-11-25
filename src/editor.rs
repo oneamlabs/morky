@@ -90,6 +90,7 @@ mod recovery;
 mod tabs;
 
 pub use chrome::*;
+use drag::Drag;
 use recovery::Recovery;
 use tabs::Tabs;
 
@@ -353,8 +354,8 @@ pub struct Prototype {
     window_title: String,
     /// Set once the user chose Discard, so the second close request goes through.
     close_confirmed: bool,
-    /// The left button went down in the source and has not come up: moves extend the selection.
-    dragging: bool,
+    /// Whether a drag selection is in progress, and where the pointer is outside the pane.
+    drag: Drag,
     /// Horizontal scroll of the source pane when word wrap is off.
     h_scroll: ScrollHandle,
     /// Where the caret was last painted, and for which offset: the horizontal follow needs a current one.
@@ -396,10 +397,6 @@ pub struct Prototype {
     /// Esc was pressed in the editor: the next Tab moves the focus instead of indenting, as with
     /// CodeMirror's `indentWithTab`, so a keyboard user can always leave the editor.
     tab_leaves: bool,
-    /// Where the pointer is while a drag selection is outside the source pane, and the task that
-    /// keeps scrolling towards it.
-    drag_outside: Option<Point<Pixels>>,
-    drag_scroll: Option<Task<()>>,
     /// Source lines painted in the last frame, with their layouts.
     painted_lines: Vec<(usize, TextLayout)>,
     /// When this frame's render began: a frame over 50 ms is logged as `stall_ms`, the
@@ -447,7 +444,7 @@ impl Prototype {
             status: None,
             window_title: String::new(),
             close_confirmed: false,
-            dragging: false,
+            drag: Drag::default(),
             h_scroll: ScrollHandle::new(),
             caret_painted: None,
             follow_x: false,
@@ -470,8 +467,6 @@ impl Prototype {
             request_watcher: None,
             _instance_lock: instance_lock,
             tab_leaves: false,
-            drag_outside: None,
-            drag_scroll: None,
             painted_lines: Vec::new(),
             frame_started: None,
             geometry_task: None,
@@ -1051,8 +1046,7 @@ impl Render for Prototype {
             .on_mouse_up(
                 MouseButton::Left,
                 cx.listener(|this, _: &MouseUpEvent, _, _| {
-                    this.dragging = false;
-                    this.drag_outside = None;
+                    this.drag.end();
                 }),
             )
             .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| this.drag_anywhere(event, cx)))
