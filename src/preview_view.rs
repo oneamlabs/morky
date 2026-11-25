@@ -89,11 +89,7 @@ fn heading_level(kind: Kind) -> Option<usize> {
 
 /// What a screen reader reads for a block: its text, with a task's state, an image's alt text and
 /// a formula's TeX (KaTeX's MathML would say more; RaTeX has no MathML).
-pub fn accessible_text(block: &Block) -> String {
-    block_label(block)
-}
-
-fn block_label(block: &Block) -> String {
+pub fn block_label(block: &Block) -> String {
     match block.kind {
         Kind::Item { checked: Some(done), .. } => format!("{} {}", if done { "Done:" } else { "To do:" }, block.text),
         Kind::Image => format!("Image: {}", if block.text.is_empty() { "no description" } else { &block.text }),

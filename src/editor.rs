@@ -1677,7 +1677,7 @@ impl Prototype {
             if lines.len() >= a11y::LINES_DESCRIBED || spent >= a11y::CHARS_DESCRIBED {
                 break;
             }
-            let text = preview_view::accessible_text(block);
+            let text = preview_view::block_label(block);
             if text.is_empty() {
                 continue;
             }

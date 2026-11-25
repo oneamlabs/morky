@@ -65,7 +65,7 @@ pub type Span = (Range<usize>, Token);
 
 /// Capture names the grammars' highlight queries use, and the app colour each one gets.
 /// tree-sitter matches the longest listed prefix, so `function.method` uses `function`.
-const CAPTURES: [(&str, Option<Token>); 23] = [
+const CAPTURES: [(&str, Option<Token>); 21] = [
     ("keyword", Some(Token::Keyword)),
     ("operator", None),
     // JSON keys: the app colours them as properties (Lezer's propertyName).
@@ -80,7 +80,6 @@ const CAPTURES: [(&str, Option<Token>); 23] = [
     ("function", Some(Token::Function)),
     ("constructor", Some(Token::Type)),
     ("type", Some(Token::Type)),
-    ("module", Some(Token::Type)),
     ("tag", Some(Token::Type)),
     ("property", Some(Token::Property)),
     ("attribute", Some(Token::Property)),
@@ -89,7 +88,6 @@ const CAPTURES: [(&str, Option<Token>); 23] = [
     ("variable.builtin", Some(Token::Keyword)),
     ("variable", None),
     ("embedded", None),
-    ("text.title", Some(Token::Heading)),
 ];
 
 /// The grammars in this build: one Cargo feature each (see Cargo.toml for their sizes).
