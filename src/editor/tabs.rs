@@ -140,7 +140,6 @@ mod tests {
             followed_cursor_line: None,
             synced_source_line: None,
             counts: Counts::default(),
-            last_preview: None,
             watcher: None,
             external_task: None,
             auto_save_task: None,

@@ -4,6 +4,27 @@ Notable changes to Marky, newest first. The format follows [Keep a Changelog](ht
 
 ## [Unreleased]
 
+### Added
+
+- The editor, preview and outline show a thin scrollbar when their content overflows.
+- Pane edges are visible and draggable: the outline can be widened or narrowed, and the editor/preview split moves.
+- A + button after the tabs opens a new tab, and the tab strip scrolls when it runs out of room.
+- File > About Marky shows the version, licence and log location.
+- Line-ending and encoding labels in the status bar explain themselves on hover.
+
+### Changed
+
+- Toolbar toggles are easier to read at a glance, buttons and tabs respond on hover, and toolbar or menu commands return the keyboard to the editor (or the preview in reading view).
+- The outline marks the heading the caret is under, keeps it in view, and shortens long headings with a tooltip; deeper levels are styled apart.
+- Preview headings h3–h6 are distinct, the body text is softer and the text column stays at a readable width on wide windows.
+
+### Fixed
+
+- The status bar no longer shows startup and parse timings, which belong in the log.
+- A full stop after a link no longer starts the next line in the preview, and the preview and outline scrollbars appear on their first layout.
+- Closing Find always returns the keyboard to the editor, even though the focused find field is removed.
+- Closing the last tab or quitting from a menu no longer tries to restore focus inside the closing window.
+
 ## [0.4.6] - 2026-11-25
 
 ### Added

@@ -15,6 +15,7 @@ impl Prototype {
         // The last tab is the window: Ctrl+W there asks to close it, as the shortcut table says.
         if self.tabs.len() == 1 {
             if self.may_close(window, cx) {
+                self.window_closing = true;
                 window.remove_window();
             }
             return;
@@ -85,6 +86,7 @@ impl Prototype {
             this.close_confirmed = true;
             this.flush_geometry(window);
             this.flush_recovery(cx);
+            this.window_closing = true;
             window.remove_window();
         });
         false
@@ -111,6 +113,7 @@ impl Prototype {
             let _ = this.update_in(cx, |this, window, cx| {
                 this.close_task = None;
                 if this.may_close(window, cx) {
+                    this.window_closing = true;
                     window.remove_window();
                 }
             });
@@ -119,6 +122,7 @@ impl Prototype {
 
     pub(super) fn quit(&mut self, _: &Quit, window: &mut Window, cx: &mut Context<Self>) {
         if self.may_close(window, cx) {
+            self.window_closing = true;
             cx.quit();
         }
     }

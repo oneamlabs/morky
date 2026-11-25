@@ -104,7 +104,6 @@ impl Prototype {
         if let Some(edited_at) = doc.edited_at.take() {
             let latency = edited_at.elapsed().as_secs_f64() * 1000.0;
             perf::log(&format!("preview_ms={latency:.0} parse_ms={parse_ms:.1}"));
-            doc.last_preview = Some((latency, parse_ms));
         }
         // Only one parse per document is in flight (a new one replaces the task), so the blocks it
         // compared against are still the shown ones; if not, compare here.

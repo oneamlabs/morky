@@ -25,6 +25,8 @@ pub(super) struct PreviewPane {
     /// Focus changes only affect the ring, so they are observed to bust the parent's cache.
     _focus_in: Option<Subscription>,
     _focus_out: Option<Subscription>,
+    /// A cached pane renders once before its list has bounds; one nudge brings the scrollbar in.
+    layout_nudged: bool,
     app: gpui::WeakEntity<Prototype>,
 }
 
@@ -46,6 +48,7 @@ impl PreviewPane {
             focus,
             _focus_in: None,
             _focus_out: None,
+            layout_nudged: false,
             app,
         }
     }
@@ -101,6 +104,14 @@ impl PreviewPane {
     pub(super) fn scroll_to_block(&mut self, index: usize, cx: &mut Context<Self>) {
         self.list.scroll_to(ListOffset { item_ix: index, offset_in_item: px(0.) });
         cx.notify();
+    }
+
+    pub(super) fn focus(&self, window: &mut Window, cx: &mut App) {
+        window.focus(&self.focus, cx);
+    }
+
+    pub(super) fn viewport_bounds(&self) -> Bounds<Pixels> {
+        self.list.viewport_bounds()
     }
 
     fn follow(&mut self, link: &str, window: &mut Window, cx: &mut Context<Self>) {
@@ -235,6 +246,14 @@ impl Render for PreviewPane {
             self._focus_in = Some(cx.on_focus(&self.focus, window, |_, _, cx| cx.notify()));
             self._focus_out = Some(cx.on_blur(&self.focus, window, |_, _, cx| cx.notify()));
         }
+        if !self.layout_nudged && self.list.item_count() > 0 && self.list.viewport_bounds().size.height == px(0.) {
+            self.layout_nudged = true;
+            cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(Duration::from_millis(50)).await;
+                let _ = this.update(cx, |_, cx| cx.notify());
+            })
+            .detach();
+        }
         let dark = self.dark;
         let focused_ring = ring(dark);
         if self.selected_link.is_some_and(|index| index >= self.links.len()) {
@@ -261,9 +280,10 @@ impl Render for PreviewPane {
             .border_1()
             .border_color(gpui::transparent_black())
             .focus_visible(move |style| style.border_color(focused_ring))
+            .relative()
             .size_full()
             .bg(tone(dark, 0x09090b, 0xffffff))
-            .text_color(tone(dark, 0xfafafa, 0x18181b))
+            .text_color(tone(dark, 0xe4e4e7, 0x18181b))
             .on_action(cx.listener(Self::link_next))
             .on_action(cx.listener(Self::link_previous))
             .on_action(cx.listener(Self::link_open))
@@ -300,5 +320,6 @@ impl Render for PreviewPane {
                 )
                 .size_full(),
             )
+            .child(scrollbar::indicator(&self.list, dark))
     }
 }

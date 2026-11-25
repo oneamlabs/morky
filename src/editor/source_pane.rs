@@ -38,6 +38,7 @@ impl Render for SourcePane {
             )
         };
         let scale = window.scale_factor();
+        let scroll_lines = lines.clone();
         let source = list(
             lines,
             cx.processor(|this: &mut SourcePane, ix, _window, cx| {
@@ -125,6 +126,8 @@ impl Render for SourcePane {
                     }))
                     .child(source),
             )
+            .child(scrollbar::indicator(&scroll_lines, dark))
+            .when(!word_wrap, |pane| pane.child(scrollbar::horizontal_indicator(&h_scroll, dark)))
             .into_any_element()
     }
 }

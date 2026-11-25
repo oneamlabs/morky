@@ -111,6 +111,20 @@ function Start-Marky([string]$Document) {
   $process
 }
 
+# A forced kill can leave a recovery snapshot that would greet the next launch with a native
+# dialog this harness does not drive. Drop it between runs that are expected to start clean.
+function Clear-Recovery { Remove-Item (Join-Path $appData 'dev.marky.editor\recovery.json') -Force -ErrorAction SilentlyContinue }
+
+# A native dialog (a recovery prompt, for instance) would take the menu and keys; close one if it
+# is there and re-read the main window, which may have been the dialog's owner.
+function Dismiss-Dialogs($Process) {
+  $dialog = [E2e.Win]::VisibleDialog([uint32]$Process.Id)
+  if ($dialog -ne [IntPtr]::Zero) {
+    [E2e.Win]::Close($dialog)
+    Start-Sleep -Milliseconds 300
+  }
+}
+
 function Window-Of($Process) {
   Wait-Until { $Process.Refresh(); if ($Process.HasExited) { return $null }; if ($Process.MainWindowHandle -ne 0) { $Process.MainWindowHandle } } 60
 }
@@ -153,11 +167,19 @@ function Press($Element) {
   $false
 }
 
-# A menu item, through the menu: Expand opens it, as a screen reader would.
-function Run-Menu([string]$Menu, [string]$Item) {
+# Open a menu bar entry, as a screen reader would. Returns false when the tree is not ready.
+function Expand-Menu([string]$Menu) {
   $button = Find $T::MenuItem $Menu
   if (-not $button) { return $false }
-  $button.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
+  $pattern = $null
+  if (-not $button.TryGetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern, [ref]$pattern)) { return $false }
+  $pattern.Expand()
+  $true
+}
+
+# A menu item, through the menu: Expand opens it, as a screen reader would.
+function Run-Menu([string]$Menu, [string]$Item) {
+  if (-not (Expand-Menu $Menu)) { return $false }
   Press (Find $null $Item)
 }
 
@@ -246,6 +268,18 @@ try {
   [E2e.Win]::Key($window, 0x1B, 0x01)
   Write-Check 'Esc closes find and returns to the editor' ((Wait-Until { -not (Find-Now $T::Group 'Find and replace') -and (Focused-Name) -eq "Edit 'Editor'" } 10) -as [bool]) (Focused-Name)
 
+  # Do this while the find selection is still the known one, before the view toggles, settings
+  # and link presses move the focus around.
+  try { (Find $T::Edit 'Editor').SetFocus() } catch { }
+  Write-Check 'assistive technology can focus the editor' ((Wait-Until { (Focused-Name) -eq "Edit 'Editor'" } 10) -as [bool]) (Focused-Name)
+  # Find left the caret on the "Body text" line; two lines down is the "Prices" line.
+  $before = Caret-Line
+  [E2e.Win]::Key($window, 0x28, 0x50); [E2e.Win]::Key($window, 0x28, 0x50)
+  $line = Wait-Until { $current = Caret-Line; if ($current -like 'Prices like*') { $current } } 10
+  Write-Check 'screen readers follow the caret (TextPattern)' ([bool]$line -and $before -like 'Body text*') "from '$before' to '$(Caret-Line)'"
+  $rects = Caret-Rectangles
+  Write-Check 'the caret has a screen rectangle for a magnifier' ([bool]$rects -and $rects.Count -ge 1 -and $rects[0].Width -gt 0 -and $rects[0].Height -gt 0) "$($rects[0])"
+
   Press (Find $T::Button 'Preview') | Out-Null
   Write-Check 'toolbar toggles the preview off' ((Wait-Until { -not (Find-Now $T::Document 'Preview') } 10) -as [bool])
   Press (Find $T::Button 'Preview') | Out-Null
@@ -282,18 +316,10 @@ try {
   Press (Find $T::Hyperlink 'a PDF') | Out-Null
   Write-Check 'links to non-Markdown files are refused' ([bool](Find-Like '^Not opened: notes\.pdf'))
 
-  # Pressing a link leaves the focus on it, as in a browser. A screen reader moves it back with
+  # Pressing a link leaves the focus on it, as in a browser; a screen reader moves it back with
   # UI Automation's SetFocus, which AccessKit passes on as a focus request.
   try { (Find $T::Edit 'Editor').SetFocus() } catch { }
-  Write-Check 'assistive technology can focus the editor' ((Wait-Until { (Focused-Name) -eq "Edit 'Editor'" } 10) -as [bool]) (Focused-Name)
-  # Find left the caret on the "Body text" line; two lines down is the "Prices" line.
-  $before = Caret-Line
-  [E2e.Win]::Key($window, 0x28, 0x50); [E2e.Win]::Key($window, 0x28, 0x50)
-  $line = Wait-Until { $current = Caret-Line; if ($current -like 'Prices like*') { $current } } 10
-  Write-Check 'screen readers follow the caret (TextPattern)' ([bool]$line -and $before -like 'Body text*') "from '$before' to '$(Caret-Line)'"
-  $rects = Caret-Rectangles
-  Write-Check 'the caret has a screen rectangle for a magnifier' ([bool]$rects -and $rects.Count -ge 1 -and $rects[0].Width -gt 0 -and $rects[0].Height -gt 0) "$($rects[0])"
-
+  Wait-Until { (Focused-Name) -eq "Edit 'Editor'" } 10 | Out-Null
   [E2e.Win]::Type($window, 'x')
   Write-Check 'dirty again before the close test' ((Wait-Until { (Title-Of $app) -like '*•*' }) -as [bool])
 
@@ -310,21 +336,30 @@ try {
   # A negative check, so a fixed wait: the window must still be open 2 s after the close request.
   Write-Check 'close with unsaved changes is held for the prompt' (-not $app.WaitForExit(2000))
   Stop-ProcessTree $app.Id
+  Clear-Recovery
 
   # ----- Run B: File > Close Tab on the only (clean) tab closes the window -----
 
+  Clear-Recovery
   $app = Start-Marky $fixture
+  $window = Window-Of $app
+  Dismiss-Dialogs $app
   $window = Window-Of $app
   $ready = Wait-Until { (Title-Of $app) -eq 'fixture.md - Marky' } 30
   if ($ready) {
     $script:ui = $A::FromHandle($window)
     Run-Menu 'File' 'Close Tab' | Out-Null
+  } else {
+    Stop-ProcessTree $app.Id
   }
   Write-Check 'closing the last tab closes the clean window without a prompt' ($ready -and $app.WaitForExit(10000))
 
   # ----- Run B2: a launch without a file (the Start menu shortcut) opens an untitled tab -----
 
+  Clear-Recovery
   $app = Start-Marky
+  $window = Window-Of $app
+  Dismiss-Dialogs $app
   $window = Window-Of $app
   $untitled = Wait-Until { (Title-Of $app) -eq 'Untitled - Marky' } 30
   Write-Check 'a launch without a file opens an Untitled tab' ([bool]$untitled) "$(if ($app.HasExited) { "exited with $($app.ExitCode)" } else { Title-Of $app })"
@@ -338,6 +373,7 @@ try {
   }
   # The list leaves the tab unsaved, so a close would wait on the discard prompt; end the process.
   Stop-ProcessTree $app.Id
+  Clear-Recovery
 
   # ----- Run C: files over the size limit are refused before they are read -----
 
@@ -352,14 +388,20 @@ try {
   # ----- Run D: tabs, external changes, recent files, single instance and auto-save -----
 
   Write-Fixture $text
+  Clear-Recovery
   $app = Start-Marky $fixture
+  $window = Window-Of $app
+  Dismiss-Dialogs $app
   $window = Window-Of $app
   $script:ui = $A::FromHandle($window)
   $ready = Wait-Until { (Title-Of $app) -eq 'fixture.md - Marky' } 30
   if ($ready) {
-    (Find $T::MenuItem 'File').GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
-    [E2e.Win]::Key($window, 0x4E, 0x31)
-    Write-Check 'the underlined menu key N opens a New Tab' ((Wait-Until { (Title-Of $app) -eq 'Untitled - Marky' } 10) -as [bool]) (Title-Of $app)
+    # Open File through UIA, then only send the access key if the menu's items are really there;
+    # a stray N would be typed into the document.
+    $opened = Wait-Until { Find-Now $T::MenuItem 'File' } 30
+    $menuOpen = $opened -and (Expand-Menu 'File') -and (Wait-Until { Find-Now $T::MenuItem 'New Tab' } 10)
+    if ($menuOpen) { [E2e.Win]::Key($window, 0x4E, 0x31) }
+    Write-Check 'the underlined menu key N opens a New Tab' ([bool]$menuOpen -and (Wait-Until { (Title-Of $app) -eq 'Untitled - Marky' } 10)) (Title-Of $app)
     Press (Find $T::Button 'Close Untitled') | Out-Null
     Write-Check 'closing a clean Untitled tab returns to the first tab' ((Wait-Until { (Title-Of $app) -eq 'fixture.md - Marky' } 10) -as [bool]) (Title-Of $app)
 

@@ -41,8 +41,6 @@ pub struct Document {
     pub(super) synced_source_line: Option<usize>,
     /// Words and UTF-16 characters, counted with each background parse, for the status bar.
     pub(super) counts: Counts,
-    /// The last update's time from keystroke to preview, and its parse time, for the status bar.
-    pub(super) last_preview: Option<(f64, f64)>,
     /// Dropping this stops watching the file.
     pub(super) watcher: Option<notify::RecommendedWatcher>,
     /// Replaced by every watcher event, so a burst checks the file once after it settles.
@@ -180,7 +178,6 @@ impl Document {
             followed_cursor_line: None,
             synced_source_line: None,
             counts: Counts::default(),
-            last_preview: None,
             watcher: None,
             external_task: None,
             auto_save_task: None,

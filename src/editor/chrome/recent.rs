@@ -13,7 +13,7 @@ impl Prototype {
             self.recent = store::load_recent(&self.config_dir).into_iter().filter(|path| path.is_file()).collect();
             window.focus(&self.recent_focus, cx);
         } else {
-            self.focus_editor(window, cx);
+            self.restore_editor_focus(window, cx);
         }
         cx.notify();
     }
@@ -23,7 +23,7 @@ impl Prototype {
             return false;
         }
         self.recent_open = false;
-        self.focus_editor(window, cx);
+        self.restore_editor_focus(window, cx);
         true
     }
 

@@ -93,6 +93,7 @@ mod lists;
 mod outline_pane;
 mod preview_pane;
 mod recovery;
+mod scrollbar;
 mod source_pane;
 mod tabs;
 mod window;
@@ -154,6 +155,13 @@ struct TabViews {
     outline: Entity<OutlinePane>,
 }
 
+/// Which pane edge a drag is moving.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PaneResize {
+    Outline,
+    Split,
+}
+
 struct FindBar {
     query: Entity<TextField>,
     replacement: Entity<TextField>,
@@ -205,6 +213,14 @@ pub struct Prototype {
     views: HashMap<u64, TabViews>,
     /// The source editor's view, shared by every tab.
     source: Option<Entity<SourcePane>>,
+    /// Fraction of the editor-plus-preview width given to the editor, and the outline's width.
+    split: f32,
+    outline_width: f32,
+    /// The pane edge being dragged, if any.
+    resizing: Option<PaneResize>,
+    /// Last laid-out viewports, so a splitter drag can map the pointer to a fraction.
+    editor_viewport: Option<Bounds<Pixels>>,
+    preview_viewport: Option<Bounds<Pixels>>,
     /// Whether AccessKit was active last frame, so a change can invalidate the cached panes.
     a11y_active: bool,
     /// Lines laid out this frame, shared with the accessibility callback, which needs their bounds
@@ -240,6 +256,9 @@ pub struct Prototype {
     pub(super) settings_task: Option<Task<()>>,
     /// A close asked for while a save was still being written; it asks again once the save is done.
     close_task: Option<Task<()>>,
+    /// Set once the window has been asked to close, so a command handler that is still unwinding
+    /// does not try to give focus to a view inside it.
+    window_closing: bool,
     _appearance: Subscription,
     _bounds: Subscription,
 }
@@ -288,6 +307,11 @@ impl Prototype {
             menu_root: cx.focus_handle(),
             views: HashMap::new(),
             source: None,
+            split: 0.5,
+            outline_width: 220.,
+            resizing: None,
+            editor_viewport: None,
+            preview_viewport: None,
             a11y_active: false,
             prepaint_lines: Rc::new(RefCell::new(Vec::new())),
             settings_focus: cx.focus_handle(),
@@ -305,6 +329,7 @@ impl Prototype {
             geometry_task: None,
             settings_task: None,
             close_task: None,
+            window_closing: false,
             _appearance: appearance,
             _bounds: bounds,
         };
@@ -359,22 +384,79 @@ impl Prototype {
     fn editor_area(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let Some(source) = &self.source else { return div().into_any_element() };
         let source = source.clone();
-        self.editor_actions(div().flex().flex_1().min_w(px(0.)).h_full().child(source), cx).into_any_element()
+        let wrapper = div().flex().flex_grow(self.split).flex_basis(px(0.)).min_w(px(0.)).h_full().child(source);
+        self.editor_actions(wrapper, cx).into_any_element()
     }
 
     /// The active document's preview, filling the flex row. Cached until the pane is notified.
     fn preview_area(&mut self, _cx: &mut Context<Self>) -> AnyElement {
-        let Some(views) = self.active_views() else { return div().flex_1().into_any_element() };
+        let Some(views) = self.active_views() else { return div().flex_grow(1.0 - self.split).into_any_element() };
         let preview = views.preview.clone();
-        div().flex_1().min_w(px(0.)).h_full().child(preview.cached(fill_style())).into_any_element()
+        div()
+            .flex_grow(1.0 - self.split)
+            .flex_basis(px(0.))
+            .min_w(px(0.))
+            .h_full()
+            .child(preview.cached(fill_style()))
+            .into_any_element()
     }
 
     /// The active document's outline, at its fixed width. Cached until headings or the caret's
     /// heading change.
     fn outline_area(&mut self, _cx: &mut Context<Self>) -> AnyElement {
-        let Some(views) = self.active_views() else { return div().w(px(220.)).into_any_element() };
+        let Some(views) = self.active_views() else { return div().w(px(self.outline_width)).into_any_element() };
         let outline = views.outline.clone();
-        div().w(px(220.)).h_full().child(outline.cached(fill_style())).into_any_element()
+        div().w(px(self.outline_width)).flex_none().h_full().child(outline.cached(fill_style())).into_any_element()
+    }
+
+    /// A six-pixel grab strip with a one-pixel line, between two panes.
+    fn pane_divider(&mut self, id: &'static str, resize: PaneResize, cx: &mut Context<Self>) -> AnyElement {
+        let dark = self.dark;
+        let active = self.resizing == Some(resize);
+        let line = tone(dark, 0x3f3f46, 0xd4d4d8);
+        let background = if active { tone(dark, 0x2563eb, 0xdbeafe) } else { line };
+        div()
+            .id(id)
+            .flex()
+            .flex_none()
+            .justify_center()
+            .w(px(6.))
+            .h_full()
+            .cursor_col_resize()
+            .hover(move |style| style.bg(tone(dark, 0x3f3f46, 0xd4d4d8)))
+            .on_mouse_down(MouseButton::Left, cx.listener(move |this, _: &MouseDownEvent, _, cx| {
+                this.resizing = Some(resize);
+                this.drag.end();
+                cx.notify();
+            }))
+            .child(div().w(px(1.)).h_full().bg(background))
+            .into_any_element()
+    }
+
+    /// Splitter and pane-edge drags, then the source selection drag.
+    fn pointer_moved(&mut self, event: &MouseMoveEvent, cx: &mut Context<Self>) {
+        if let Some(resize) = self.resizing {
+            if event.pressed_button != Some(MouseButton::Left) {
+                self.resizing = None;
+                cx.notify();
+                return;
+            }
+            match resize {
+                PaneResize::Outline => {
+                    self.outline_width = f32::from(event.position.x).clamp(140., 400.);
+                }
+                PaneResize::Split => {
+                    if let (Some(editor), Some(preview)) = (self.editor_viewport, self.preview_viewport) {
+                        let left = editor.left();
+                        let total = f32::from(preview.right() - left).max(1.);
+                        self.split = (f32::from(event.position.x - left) / total).clamp(0.15, 0.85);
+                    }
+                }
+            }
+            cx.notify();
+            return;
+        }
+        self.drag_anywhere(event, cx);
     }
 
     /// Applies a font-size or theme change to every pane.
@@ -432,8 +514,11 @@ impl Prototype {
         if self.close_settings(window, cx) {
             return;
         }
-        if self.find.take().is_some() {
+        if self.find.is_some() {
+            // Focus the editor before dropping the find field, whose own focus would otherwise be
+            // cleared as it goes and leave the window with none.
             self.focus_editor(window, cx);
+            self.find = None;
             return;
         }
         if self.focus.is_focused(window) {
@@ -557,6 +642,12 @@ impl Render for Prototype {
         let show_preview = self.settings.preview_visible();
         let show_outline = self.settings.show_outline;
         let font_size = self.settings.font_size;
+        self.editor_viewport = Some(self.doc().lines.viewport_bounds());
+        self.preview_viewport = if show_preview {
+            self.active_views().map(|views| views.preview.update(cx, |pane, _| pane.viewport_bounds()))
+        } else {
+            None
+        };
 
         let panes = div()
             .flex()
@@ -564,7 +655,9 @@ impl Render for Prototype {
             .min_h_0()
             .on_mouse_down(MouseButton::Left, cx.listener(Self::close_menu))
             .when(show_outline, |row| row.child(self.outline_area(cx)))
+            .when(show_outline, |row| row.child(self.pane_divider("outline-divider", PaneResize::Outline, cx)))
             .when(show_editor, |row| row.child(self.editor_area(cx)))
+            .when(show_editor && show_preview, |row| row.child(self.pane_divider("split-divider", PaneResize::Split, cx)))
             .when(show_preview, |row| row.child(self.preview_area(cx)))
             .when(self.recent_open, |row| row.child(self.recent_panel(cx)))
             .when(self.settings_open, |row| row.child(self.settings_panel(cx)));
@@ -582,11 +675,14 @@ impl Render for Prototype {
             // Wherever the button comes up, a drag selection ends.
             .on_mouse_up(
                 MouseButton::Left,
-                cx.listener(|this, _: &MouseUpEvent, _, _| {
+                cx.listener(|this, _: &MouseUpEvent, _, cx| {
                     this.drag.end();
+                    if this.resizing.take().is_some() {
+                        cx.notify();
+                    }
                 }),
             )
-            .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| this.drag_anywhere(event, cx)))
+            .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| this.pointer_moved(event, cx)))
             // Dropping files on the window opens each one as a tab, as the app does.
             .on_drop(cx.listener(|this, paths: &ExternalPaths, _, cx| {
                 for path in paths.paths() {
