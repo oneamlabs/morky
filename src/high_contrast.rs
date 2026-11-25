@@ -95,6 +95,15 @@ pub fn caret() -> Option<Rgba> {
     Some(rgb(WINDOW_TEXT.load(Ordering::Relaxed)))
 }
 
+/// A light/dark colour pair, mapped onto the system palette while high contrast is on.
+/// Every colour in the UI goes through here, so no view owns the rule.
+pub fn tone(dark: bool, dark_value: u32, light_value: u32) -> Rgba {
+    if let Some(color) = color(dark_value, light_value) {
+        return color;
+    }
+    if dark { rgb(dark_value) } else { rgb(light_value) }
+}
+
 /// Maps one light/dark pair onto the system palette. Pure, so the rules can be tested without a
 /// high-contrast theme installed.
 fn map_with(palette: &Palette, dark_value: u32, light_value: u32) -> u32 {

@@ -26,7 +26,8 @@ use crate::{diagrams, diagnostics, instance, math, store, watcher};
 use crate::files::{self, FileMeta, OpenedFile};
 use crate::perf;
 use crate::preview::{self, Block, Kind};
-use crate::preview_view::{self, Look, tone};
+use crate::preview_view::{self, Look};
+use crate::high_contrast::tone;
 use crate::settings::{self, ViewSettings};
 use crate::syntax::{self, Span};
 use crate::text_field::{FieldEvent, InputLayer, TextField};
@@ -459,7 +460,7 @@ impl Prototype {
             preview_link: None,
             prepaint_lines: Rc::new(RefCell::new(Vec::new())),
             settings_focus: cx.focus_handle(),
-            settings_controls: (0..14).map(|_| cx.focus_handle()).collect(),
+            settings_controls: (0..chrome::settings_slot::COUNT).map(|_| cx.focus_handle()).collect(),
             settings_open: false,
             recent: store::load_recent(&config_dir).into_iter().filter(|path| path.is_file()).collect(),
             recent_open: false,
@@ -1671,24 +1672,17 @@ impl Prototype {
         if !window.is_a11y_active() {
             return None;
         }
-        let mut lines = Vec::new();
-        let mut spent = 0;
-        for (index, block) in self.doc().blocks.iter().enumerate() {
-            if lines.len() >= a11y::LINES_DESCRIBED || spent >= a11y::CHARS_DESCRIBED {
-                break;
-            }
-            let text = preview_view::block_label(block);
-            if text.is_empty() {
-                continue;
-            }
-            spent += text.len();
-            lines.push(a11y::Line { index, text, bounds: None, positions: None, widths: None });
-        }
-        // AccessKit marks a line end with the line break character, as in the editor's runs.
-        let last = lines.len().saturating_sub(1);
-        for line in lines.iter_mut().take(last) {
-            line.text.push('\n');
-        }
+        let lines: Vec<a11y::Line> = self
+            .doc()
+            .blocks
+            .iter()
+            .enumerate()
+            .take(a11y::LINES_DESCRIBED)
+            .map(|(index, block)| a11y::Line { index, text: preview_view::block_label(block), bounds: None, positions: None, widths: None })
+            .filter(|line| !line.text.is_empty())
+            .collect();
+        let mut lines = a11y::within_budget(lines, &[]);
+        a11y::end_lines(&mut lines);
         Some(lines)
     }
 
@@ -2231,7 +2225,7 @@ impl Prototype {
                 a11y::Line { index, text, bounds: None, positions: None, widths: None }
             })
             .collect();
-        let lines = a11y::within_budget(lines, [focus.line, anchor.line]);
+        let lines = a11y::within_budget(lines, &[focus.line, anchor.line]);
         Some((lines, anchor, focus))
     }
 

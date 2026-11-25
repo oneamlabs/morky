@@ -150,6 +150,29 @@ fn entries(menu: OpenMenu) -> &'static [Entry] {
 /// Room for the longest menu: one focus handle per item, so the arrows can move between them.
 pub const MENU_ITEMS: usize = 9;
 
+/// Where each control in the settings panel keeps its focus handle, so Tab and Shift+Tab can cycle
+/// them and wrap. Named rather than written as numbers: adding a control used to shift every index
+/// after it, which broke the Tab order silently. `COUNT` sizes the list in `Prototype::new`.
+pub mod settings_slot {
+    pub const THEME_SYSTEM: usize = 0;
+    pub const THEME_LIGHT: usize = 1;
+    pub const THEME_DARK: usize = 2;
+    pub const FONT_SMALLER: usize = 3;
+    pub const FONT_LARGER: usize = 4;
+    pub const WORD_WRAP: usize = 5;
+    pub const TYPOGRAPHER: usize = 6;
+    pub const AUTO_SAVE: usize = 7;
+    pub const LINE_LF: usize = 8;
+    pub const LINE_CRLF: usize = 9;
+    pub const SHOW_EDITOR: usize = 10;
+    pub const SHOW_PREVIEW: usize = 11;
+    pub const SHOW_OUTLINE: usize = 12;
+    pub const CLOSE: usize = 13;
+
+    /// One past the last slot: the number of handles the panel needs.
+    pub const COUNT: usize = CLOSE + 1;
+}
+
 const MENUS: [(OpenMenu, &str); 3] = [(OpenMenu::File, "File"), (OpenMenu::Edit, "Edit"), (OpenMenu::View, "View")];
 
 /// The focus ring: blue, at least 3:1 against every background it is drawn on (WCAG 2.2 non-text contrast).
@@ -704,7 +727,7 @@ impl Prototype {
         self.settings_open = !self.settings_open;
         if self.settings_open {
             self.recent_open = false;
-            window.focus(&self.settings_controls[0], cx);
+            window.focus(&self.settings_controls[settings_slot::THEME_SYSTEM], cx);
         } else {
             self.focus_editor(window, cx);
         }
@@ -805,7 +828,7 @@ impl Prototype {
                                 .aria_label("Close settings")
                                 .focusable()
                                 .tab_stop(true)
-                                .track_focus(&self.settings_controls[13])
+                                .track_focus(&self.settings_controls[settings_slot::CLOSE])
                                 .px_2()
                                 .child("×"),
                             dark,
@@ -821,9 +844,9 @@ impl Prototype {
                     .id("theme-group")
                     .role(Role::RadioGroup)
                     .aria_label("Theme")
-                    .child(theme_choice("theme-system", "System", settings::ThemeChoice::System, self.settings_controls[0].clone(), cx))
-                    .child(theme_choice("theme-light", "Light", settings::ThemeChoice::Light, self.settings_controls[1].clone(), cx))
-                    .child(theme_choice("theme-dark", "Dark", settings::ThemeChoice::Dark, self.settings_controls[2].clone(), cx)),
+                    .child(theme_choice("theme-system", "System", settings::ThemeChoice::System, self.settings_controls[settings_slot::THEME_SYSTEM].clone(), cx))
+                    .child(theme_choice("theme-light", "Light", settings::ThemeChoice::Light, self.settings_controls[settings_slot::THEME_LIGHT].clone(), cx))
+                    .child(theme_choice("theme-dark", "Dark", settings::ThemeChoice::Dark, self.settings_controls[settings_slot::THEME_DARK].clone(), cx)),
             )
             .child(heading("Editor font size"))
             .child(
@@ -850,19 +873,19 @@ impl Prototype {
                     .flex_row()
                     .items_center()
                     .gap_2()
-                    .child(size_button("font-smaller", "−", "Smaller text", -1, self.settings_controls[3].clone(), cx))
+                    .child(size_button("font-smaller", "−", "Smaller text", -1, self.settings_controls[settings_slot::FONT_SMALLER].clone(), cx))
                     .child(format!("{size} px"))
-                    .child(size_button("font-larger", "+", "Larger text", 1, self.settings_controls[4].clone(), cx)),
+                    .child(size_button("font-larger", "+", "Larger text", 1, self.settings_controls[settings_slot::FONT_LARGER].clone(), cx)),
             )
             .child(heading("Editor and preview"))
-            .child(flag("set-wrap", "Word wrap", settings.word_wrap, |s| s.word_wrap = !s.word_wrap, self.settings_controls[5].clone(), cx))
+            .child(flag("set-wrap", "Word wrap", settings.word_wrap, |s| s.word_wrap = !s.word_wrap, self.settings_controls[settings_slot::WORD_WRAP].clone(), cx))
             .child(
                 choice_row("set-typographer", "Smart quotes and dashes in the preview", Role::CheckBox, typographer, dark)
-                    .track_focus(&self.settings_controls[6])
+                    .track_focus(&self.settings_controls[settings_slot::TYPOGRAPHER])
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.set_typographer(!typographer, cx))),
             )
             .child(heading("Saving"))
-            .child(flag("set-autosave", "Auto save", settings.auto_save, |s| s.auto_save = !s.auto_save, self.settings_controls[7].clone(), cx))
+            .child(flag("set-autosave", "Auto save", settings.auto_save, |s| s.auto_save = !s.auto_save, self.settings_controls[settings_slot::AUTO_SAVE].clone(), cx))
             .child(
                 choice_row(
                     "line-lf",
@@ -871,7 +894,7 @@ impl Prototype {
                     settings.new_file_line_ending == crate::files::LineEnding::Lf,
                     dark,
                 )
-                .track_focus(&self.settings_controls[8])
+                .track_focus(&self.settings_controls[settings_slot::LINE_LF])
                 .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.set_line_ending(crate::files::LineEnding::Lf, cx))),
             )
             .child(
@@ -882,13 +905,13 @@ impl Prototype {
                     settings.new_file_line_ending == crate::files::LineEnding::Crlf,
                     dark,
                 )
-                .track_focus(&self.settings_controls[9])
+                .track_focus(&self.settings_controls[settings_slot::LINE_CRLF])
                 .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.set_line_ending(crate::files::LineEnding::Crlf, cx))),
             )
             .child(heading("Panes"))
-            .child(flag("set-editor", "Show editor", settings.show_editor, |s| s.show_editor = !s.show_editor, self.settings_controls[10].clone(), cx))
-            .child(flag("set-preview", "Show preview", settings.show_preview, |s| s.show_preview = !s.show_preview, self.settings_controls[11].clone(), cx))
-            .child(flag("set-outline", "Show outline", settings.show_outline, |s| s.show_outline = !s.show_outline, self.settings_controls[12].clone(), cx))
+            .child(flag("set-editor", "Show editor", settings.show_editor, |s| s.show_editor = !s.show_editor, self.settings_controls[settings_slot::SHOW_EDITOR].clone(), cx))
+            .child(flag("set-preview", "Show preview", settings.show_preview, |s| s.show_preview = !s.show_preview, self.settings_controls[settings_slot::SHOW_PREVIEW].clone(), cx))
+            .child(flag("set-outline", "Show outline", settings.show_outline, |s| s.show_outline = !s.show_outline, self.settings_controls[settings_slot::SHOW_OUTLINE].clone(), cx))
             .on_action(cx.listener(|this, _: &SettingsNext, window, cx| this.settings_step(1, window, cx)))
             .on_action(cx.listener(|this, _: &SettingsPrevious, window, cx| this.settings_step(-1, window, cx)))
     }
@@ -1154,5 +1177,32 @@ mod tests {
         for (menu, _) in MENUS {
             assert!(entries(menu).len() <= MENU_ITEMS);
         }
+    }
+
+    /// A new settings control that reuses a slot, or adds one past `COUNT`, would make Tab skip it
+    /// or move the focus nowhere; both are silent at runtime.
+    #[test]
+    fn every_settings_slot_is_distinct_and_within_count() {
+        let slots = [
+            settings_slot::THEME_SYSTEM,
+            settings_slot::THEME_LIGHT,
+            settings_slot::THEME_DARK,
+            settings_slot::FONT_SMALLER,
+            settings_slot::FONT_LARGER,
+            settings_slot::WORD_WRAP,
+            settings_slot::TYPOGRAPHER,
+            settings_slot::AUTO_SAVE,
+            settings_slot::LINE_LF,
+            settings_slot::LINE_CRLF,
+            settings_slot::SHOW_EDITOR,
+            settings_slot::SHOW_PREVIEW,
+            settings_slot::SHOW_OUTLINE,
+            settings_slot::CLOSE,
+        ];
+        let mut seen = slots.to_vec();
+        seen.sort_unstable();
+        seen.dedup();
+        assert_eq!(seen.len(), slots.len(), "two controls share a focus slot");
+        assert_eq!(seen, (0..settings_slot::COUNT).collect::<Vec<_>>(), "slots skip or exceed COUNT");
     }
 }

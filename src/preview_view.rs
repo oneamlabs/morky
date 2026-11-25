@@ -7,9 +7,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use gpui::{AppContext, ClickEvent, Context, FontWeight, IntoElement, Pixels, Role, SharedString, StyledText, SvgRenderer, div, img, prelude::*, px, rgb};
+use gpui::{AppContext, ClickEvent, Context, FontWeight, IntoElement, Pixels, Role, SharedString, StyledText, SvgRenderer, div, img, prelude::*, px};
 
 use crate::editor::{self, Prototype};
+use crate::high_contrast::tone;
 use crate::{diagrams, math};
 use crate::preview::{self, Align, Block, Kind, Run, Table};
 use crate::syntax::Span;
@@ -40,13 +41,6 @@ impl Look {
     fn muted(&self) -> gpui::Rgba {
         tone(self.dark, 0xa1a1aa, 0x52525b)
     }
-}
-
-pub fn tone(dark: bool, dark_value: u32, light_value: u32) -> gpui::Rgba {
-    if let Some(color) = crate::high_contrast::color(dark_value, light_value) {
-        return color;
-    }
-    if dark { rgb(dark_value) } else { rgb(light_value) }
 }
 
 /// One list item: the block with the pane's side padding, and the top padding on the first block.
