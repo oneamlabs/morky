@@ -23,19 +23,21 @@ Settings and recent files live in `%APPDATA%\dev.marky.editor\`; recovery snapsh
 
 ## Benchmarks
 
-Release-build measurements on an i5-9300H with 16 GB RAM, using `scripts/fixtures/typical.md` (5 KB). Values are from **7 Nov 2026**, medians of five runs unless noted. Budgets are release-blocking; the measurement notes are in the [contributor guide](AGENTS.md).
+Release-build measurements on an i5-9300H with 16 GB RAM, using `scripts/fixtures/typical.md` (5 KB). Values are from **25 Nov 2026**, medians of five runs unless noted. Budgets are release-blocking; the measurement notes are in the [contributor guide](AGENTS.md).
 
 | Metric | Measured | Target | Hard limit |
 | --- | ---: | ---: | ---: |
-| Installer | 6.27 MB | ≤ 6 MB | 10 MB |
-| Program (`marky.exe`) | 21.07 MB | ≤ 22 MB | 24 MB |
+| Installer | 6.30 MB | ≤ 6 MB | 10 MB |
+| Program (`marky.exe`) | 21.12 MB | ≤ 22 MB | 24 MB |
 | Portable ZIP | 8.78 MB | — | — |
-| Startup, ready to edit | 450 ms | ≤ 900 ms | 1,000 ms |
-| Typing | 1.8 ms p50 / 2.9 ms p95 | ≤ 20 ms | 33 ms |
+| Startup, ready to edit | 498 ms | ≤ 900 ms | 1,000 ms |
+| Typing | 1.8 ms p50 / 2.7 ms p95 | ≤ 20 ms | 33 ms |
 | Preview after typing stops | 31 ms | ≤ 200 ms | 400 ms |
-| Memory, 10 s after launch | 17.5 MB | ≤ 35 MB | 60 MB |
+| Memory, 10 s after launch | 16.8 MB | ≤ 35 MB | 60 MB |
 
-The program grew to accommodate all Mermaid diagram types in one executable; the accepted reasons are in [DECISION.md](DECISION.md). The installer is 6.27 MB, 0.27 MB over its 6 MB target and under the 10 MB hard limit.
+The program grew to accommodate all Mermaid diagram types in one executable; the accepted reasons are in [DECISION.md](DECISION.md). The installer is 6.30 MB, 0.30 MB over its 6 MB target and under the 10 MB hard limit.
+
+`bench.ps1` was re-run on 25 Nov 2026 after formulas and diagrams were given one shared SVG rasteriser; start-up, memory and preview stayed within noise. The portable ZIP figure is from 7 Nov 2026 and has not been re-measured.
 
 Large-file numbers from the migration prototype (`scripts/bench-large.ps1`, 7 Nov 2026) are in [docs/gpui-migration.md](docs/gpui-migration.md). Re-measure them before changing preview or editor layout.
 
