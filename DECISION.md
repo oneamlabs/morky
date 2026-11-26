@@ -2,6 +2,84 @@
 
 Decisions about Marky that are not obvious from the code, with the reasons and the evidence behind them. Newest first. Each entry says what was decided, what else was considered, and what it costs; change one only with new evidence, and add a new entry rather than rewriting an old one.
 
+## 2026-11-26: The window adopts the Windows 11 look
+
+Context: the platform integration was already native (OS caption, DWM dark mode, Segoe UI, IME, AccessKit, single instance, embedded icon) but the paint was Tailwind's `zinc` ladder plus `blue-600`, with no corner radii, no shadows and a hardcoded accent. It read as a themed Win32 app, not a Windows 11 one. The role refactor above made the restyle possible without touching 73 call sites.
+
+### Decision
+
+- **WinUI 3's values, not Tailwind's.** `theme.rs` now holds Fluent's surfaces (`#F3F3F3` / `#202020` base, `#FFFFFF` / `#2B2B2B` card), a `#0000000F`-equivalent stroke, WinUI's text and semantic colours, and the 14 px body / 12 px caption type scale.
+- **Fluent geometry.** 4 px radii on controls (buttons, tabs, fields, choice rows) and 8 px on overlays (menus, tooltips), with a 1 px stroke on cards and `shadow_md` under overlays. `theme::RADIUS_CONTROL` and `RADIUS_OVERLAY` are the only radii; a view does not invent one.
+- **The accent is the user's.** `accent.rs` reads `HKCU\Software\Microsoft\Windows\DWM\AccentColor` (an `ABGR` DWORD) with `windows-sys`'s registry API, falling back to `#0078D4`, once a second alongside the high-contrast poll. `AccentText` is a separate role because `#0078D4` on white is only 3.4:1 — `accent_text_on` walks the user's accent towards white or black until it clears 4.5:1, since the accent is arbitrary.
+- **The app draws its own caption row.** `appears_transparent: true` hides the OS caption; `editor/chrome/title_bar.rs` draws the app icon, the tabs and the window buttons in the app's theme. This is what fixes the mismatch the native caption could not: GPUI derives the caption's dark mode from Windows' theme alone, so Theme = Dark on a Light system gave a light caption over a dark window.
+- **Caption buttons are siblings of the drag area, and carry no `on_click`.** GPUI performs the minimize/maximize/close itself from `WM_NCLBUTTONUP` and decides what is what from the frame's `window_control_area` hitboxes. A drag area wrapping the buttons answered `HTCAPTION` for them; an `on_click` consumed the mouse-up first. Both were tried and measured.
+- **Caption glyphs are SVG.** `U+2750` (restore) is absent from Segoe UI and fell back to a plain square, making restore and maximize identical. `icons.rs` draws the four glyphs as geometry instead. An SVG in GPUI is an alpha mask tinted by its **own** `text_color`, which does not inherit — without it the glyph is invisible.
+- **The maximize glyph tracks `Window::is_maximized()`**, and `observe_window_bounds` now calls `cx.notify()` so a platform-driven resize repaints it.
+
+### Options considered
+
+| Question | Chosen | Rejected, and why |
+| --- | --- | --- |
+| Palette | WinUI 3 values in `theme.rs` | **Keep Tailwind**: the app does not look like its platform. **A second "Fluent" theme beside the old one**: two palettes to keep in step, and the contrast test would only cover one. |
+| Accent source | The registry, via `windows-sys` | **WinRT `UISettings`**: a new dependency and COM initialisation for one DWORD. **`DwmGetColorizationColor`**: undocumented. **Fixed `#0078D4`**: ignores the user's personalisation. |
+| Accent as text | Derive with a contrast walk | **A static `AccentText` per theme**: wrong for non-default accents, which is most users. **Skip it**: accent text would fail 4.5:1 on white. |
+| Window frame | The app draws the caption | **Native caption**: cannot follow the app's theme, which is the visible bug. **Merged row without custom buttons**: loses snap layouts' button hit-testing. |
+| Caption buttons | `window_control_area` only; no `on_click` | **`on_click` per button**: consumed the mouse-up before GPUI's handler, so nothing happened. **Nested inside one drag area**: the drag area won the hit-test. Both verified broken on screen. |
+| Caption glyphs | SVG geometry | **Font glyphs**: `U+2750` is missing and silently falls back. **Segoe Fluent Icons by name**: a font dependency GPUI cannot fall back through, and absent on Windows 10. |
+| Mica | **Not done** | GPUI exposes `MicaBackdrop` and this pin implements it, but the root is opaque and making it translucent needs an alpha-aware contrast test and re-checked readability. Deferred rather than half-done; the surface colours already match the Win11 backdrop, so the seam is not visible. |
+
+### Evidence
+
+- `cargo clippy --workspace --all-targets -- -D warnings` clean; `cargo test --workspace` 146 passed, 1 ignored; `cargo build --release --workspace` succeeds.
+- `scripts/e2e.ps1`: 45 PASS, 4 documented SKIP. The window title still reaches `MainWindowTitle` and every dialog-free flow works with the app-drawn caption.
+- Pixel samples from the release build: dark `#202020` base, `#1C1C1C` preview, `#2B2B2B` active tab; light `#F3F3F3` chrome and `#FFFFFF` editor. Both match the tokens exactly.
+- Caption buttons clicked on a release build at 125% DPI: maximize, restore and minimize each worked (verified with `IsZoomed` / `IsIconic`).
+- Under the old native caption, a light-themed app on a dark Windows got a dark title bar (`#394B5A` sampled at the caption). The app-drawn row is `#F3F3F3` — the bug is gone.
+- The accent conversion is tested against a value read from this machine: `AccentColor` `0xFF484A4C` → `0x4C4A48`, which matches `ColorizationColor` `0xC44C4A48`.
+- `accent_text_on` is tested over seven accents (including pure black, white, red, green) against both themes' cards, and always clears 4.5:1.
+
+### Consequences
+
+- Tab clicks and drags are handled in the caption row; a future drag-your-tab-out feature must not let a drag area swallow the tab strip.
+- `main.rs` no longer gets an OS caption, so anything relying on caption hit-testing must go through `window_control_area`.
+- Mica is the remaining piece of the Windows 11 look and needs its own pass; the deferred option is recorded above rather than left implicit.
+- DPI is not abstracted: the caption's 46×32 px metrics are logical pixels and scale correctly, but any caption test written against physical coordinates must account for the display scale (a 125% display made an early manual check look like a failure).
+
+## 2026-11-26: Colours are roles, not hex pairs
+
+Context: the UI carried 73 `tone(dark, dark_value, light_value)` calls with raw hex across 13 files (144 literals in total), and `high_contrast` inferred what a colour *meant* from its brightness (`dark_value > 0x202020`, `blueish()`, `is_vivid()`). That worked only because the palette happened to be Tailwind's zinc ladder, and it made any restyle a 73-site edit with no way to verify it. The contrast test re-typed 20 hex pairs by hand instead of reading the real ones, so it asserted a copy and passed while the UI could fail.
+
+### Decision
+
+- **`src/theme.rs` owns every colour.** A view names a [`Color`] role (`Base`, `Card`, `Stroke`, `Accent`, `Selection`, …); `theme::color(dark, role)` returns the value. No hex outside the module except the syntax highlighter's own hues.
+- **High contrast maps by role, not by luminance.** `high_contrast::resolve(role, value)` looks the role up in an explicit table (`base`→`COLOR_WINDOW`, `surface`→`COLOR_BTNFACE`, accents→`COLOR_HOTLIGHT`, highlights→`COLOR_HIGHLIGHT`). `blueish`, `is_vivid` and the `0x202020` threshold are deleted. A restyle can no longer silently misclassify a surface.
+- **Overloaded pairs got distinct roles.** `0x27272a/0xf4f4f5` was both the menu bar and the code-block background; `0x3f3f46/0xd4d4d8` was border, divider and hover; `0x52525b/0xd4d4d8` was border and pressed-button fill. Each is now its own role, so a theme change moves one thing rather than three.
+- **The contrast test reads the palette.** `contrast.rs` iterates `theme::palette(dark)` and asserts by role, including pairs it never checked (text on a code block, the menu highlight, an active tab, a placeholder). It is verified to fail when a token is broken.
+- **Syntax colours stay a highlighter theme**, but under high contrast they now collapse onto the system colours (`high_contrast::syntax_color`). Previously code ignored high contrast entirely.
+- **`math.rs` draws formulas in `PreviewText`** rather than a hardcoded float RGB, so formulas follow both themes and high contrast.
+
+### Options considered
+
+| Question | Chosen | Rejected, and why |
+| --- | --- | --- |
+| Where colours live | A `theme` module with named roles | **Keep `tone(dark, a, b)`**: every restyle is a 73-site edit, and nothing can check it. **A `Theme` struct passed down every call**: plumbing through cached views for no gain, since `dark` is already the only variable. |
+| High-contrast mapping | An explicit role → system-colour table | **Keep luminance inference**: guesses, breaks on any palette whose surfaces are close in brightness (WinUI's are), and cannot be tested meaningfully. |
+| Contrast test | Read `theme::palette` | **Keep the hand-written list**: it asserts a copy, so it can pass while the UI fails — which is what it was doing. |
+| Syntax colours | Own hues, mapped only under high contrast | **Move them into `theme` roles**: a highlighter theme is a different concern with 20+ hues, and role names would not help. **Leave them out of high contrast**: the gap that made code unreadable on a system palette. |
+
+### Evidence
+
+- `cargo clippy --workspace --all-targets -- -D warnings` clean; `cargo test --workspace` 143 passed, 1 ignored.
+- The new contrast test failed on its first run with a real pre-existing bug: the find field's placeholder was 3.67:1 in the dark theme (`0x71717a` on `0x18181b`). The old test could not see it. `text_disabled` is now `0x8b8b93`.
+- Breaking a token deliberately (`text_quiet` → `0x555555`) fails the test in three places, so it is not vacuous.
+- Step 0 was a no-visual-change refactor: every role's value in both themes is the exact hex it replaced.
+
+### Consequences
+
+- Adding a colour means adding a role, a field in both palettes and a match arm; the compiler names any arm missed.
+- `theme::value` is test-only (`#[cfg(test)]`) because views take `Rgba`; `contrast.rs` uses it for the numeric assertions.
+- The syntax highlighter's hues still live in `syntax.rs`; a restyle of code colour is a separate, deliberate edit.
+
 ## 2026-11-25: A UI pass on the window chrome
 
 Context: a screenshot review found interaction-state gaps (toolbar focus, invisible scroll position, ambiguous toggles), layout gaps (no pane boundaries or splitters, no New affordance) and typography gaps (flat preview hierarchy, long lines, debug metrics in the status bar).

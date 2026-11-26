@@ -65,8 +65,8 @@ impl Render for SourcePane {
             .flex_1()
             .min_w(px(0.))
             .h_full()
-            .bg(tone(dark, 0x18181b, 0xfafafa))
-            .text_color(tone(dark, 0xfafafa, 0x18181b))
+            .bg(color(dark, Color::Editor))
+            .text_color(color(dark, Color::Text))
             .child(InputLayer { view: cx.entity(), focus: self.focus.clone() })
             .child(
                 div()

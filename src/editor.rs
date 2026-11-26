@@ -17,7 +17,7 @@ use gpui::{
     AnyElement, App, Bounds, ClipboardItem, Context, Entity, EntityInputHandler, FocusHandle, Focusable, HighlightStyle,
     ExternalPaths, IntoElement, ListAlignment, ListOffset, ListScrollEvent, ListState, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollHandle,
     PromptLevel, SharedString, StyledText, Subscription, Task, TextAlign, TextLayout, TextRun, UTF16Selection, Window, WindowBounds,
-    actions, canvas, deferred, div, fill, list, point, prelude::*, px, relative, rgb, size, svg,
+    actions, canvas, deferred, div, fill, list, point, prelude::*, px, relative, size, svg,
 };
 
 use crate::allowlist;
@@ -27,7 +27,6 @@ use crate::files::{self, FileMeta, OpenedFile};
 use crate::perf;
 use crate::preview::{self, Block, Kind};
 use crate::preview_view;
-use crate::high_contrast::tone;
 use crate::settings::{self, ViewSettings};
 use crate::syntax::{self, Span};
 use crate::text_field::{FieldEvent, InputLayer, TextField};
@@ -98,6 +97,7 @@ mod source_pane;
 mod tabs;
 mod window;
 
+pub(crate) use crate::theme::{self, color, quiet, ring, Color};
 pub use chrome::*;
 pub use document::Document;
 use document::{file_name, headings_of, links_of, Counts, ImagesInUse, Parsed};
@@ -110,8 +110,6 @@ use tabs::Tabs;
 
 /// CodeMirror's default indent unit, which Tab adds and Shift+Tab removes (the app binds `indentWithTab`).
 const INDENT: &str = "  ";
-
-const CARET: u32 = 0x2563eb;
 
 /// Lines and blocks laid out beyond the viewport, so scrolling a little does not wait for layout.
 const OVERDRAW: f32 = 400.;
@@ -277,7 +275,12 @@ impl Prototype {
     ) -> Self {
         // "System" follows Windows' light or dark mode while the window is open.
         let appearance = cx.observe_window_appearance(window, |_, _, cx| cx.notify());
-        let bounds = cx.observe_window_bounds(window, |this, window, cx| this.schedule_geometry_save(window, cx));
+        // The maximize button's glyph follows the window state, which a platform-driven resize
+        // changes without any click of ours: repaint so the glyph flips.
+        let bounds = cx.observe_window_bounds(window, |this, window, cx| {
+            this.schedule_geometry_save(window, cx);
+            cx.notify();
+        });
         let document = Document::open(opened, 0, cx);
         perf::mark("open");
         let mono = mono_family(cx);
@@ -413,8 +416,8 @@ impl Prototype {
     fn pane_divider(&mut self, id: &'static str, resize: PaneResize, cx: &mut Context<Self>) -> AnyElement {
         let dark = self.dark;
         let active = self.resizing == Some(resize);
-        let line = tone(dark, 0x3f3f46, 0xd4d4d8);
-        let background = if active { tone(dark, 0x2563eb, 0xdbeafe) } else { line };
+        let line = color(dark, Color::Stroke);
+        let background = if active { color(dark, Color::AccentSubtle) } else { line };
         div()
             .id(id)
             .flex()
@@ -423,7 +426,7 @@ impl Prototype {
             .w(px(6.))
             .h_full()
             .cursor_col_resize()
-            .hover(move |style| style.bg(tone(dark, 0x3f3f46, 0xd4d4d8)))
+            .hover(move |style| style.bg(color(dark, Color::Hover)))
             .on_mouse_down(MouseButton::Left, cx.listener(move |this, _: &MouseDownEvent, _, cx| {
                 this.resizing = Some(resize);
                 this.drag.end();
@@ -613,6 +616,10 @@ impl Render for Prototype {
         if crate::high_contrast::refresh_periodically() {
             self.notify_views(cx);
         }
+        // A new accent repaints cached panes; the window itself redraws every frame regardless.
+        if crate::accent::refresh() {
+            self.notify_views(cx);
+        }
         self.refresh_views_for_a11y(window, cx);
         let dark = self.settings.is_dark(window.appearance());
         if dark != self.dark {
@@ -662,15 +669,16 @@ impl Render for Prototype {
             .when(self.recent_open, |row| row.child(self.recent_panel(cx)))
             .when(self.settings_open, |row| row.child(self.settings_panel(cx)));
         let find_bar = self.find_bar(cx);
+        let maximized = window.is_maximized();
 
         let root = div()
             .size_full()
             .relative()
             .flex()
             .flex_col()
-            .bg(tone(dark, 0x18181b, 0xf4f4f5))
+            .bg(color(dark, Color::Base))
             .text_size(px(font_size))
-            .text_color(tone(dark, 0xfafafa, 0x18181b))
+            .text_color(color(dark, Color::Text))
             .key_context("Prototype")
             // Wherever the button comes up, a drag selection ends.
             .on_mouse_up(
@@ -698,9 +706,9 @@ impl Render for Prototype {
             .on_action(cx.listener(Self::find_close))
             .on_action(cx.listener(Self::quit))
             .on_action(cx.listener(Self::save))
+            .child(self.title_bar(maximized, cx))
             .child(self.menu_bar(cx))
             .child(self.toolbar(cx))
-            .child(self.tab_strip(cx))
             .children(find_bar)
             .child(panes)
             .child(self.status_bar(cx))

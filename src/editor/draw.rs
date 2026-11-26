@@ -96,7 +96,7 @@ impl Prototype {
                     highlights.push((span, token.style(dark)));
                 }
             }
-            let found_style = HighlightStyle { background_color: Some(tone(dark, 0x713f12, 0xfef08a).into()), ..HighlightStyle::default() };
+            let found_style = HighlightStyle { background_color: Some(color(dark, Color::FindMatch).into()), ..HighlightStyle::default() };
             let matches = self.matches();
             let first = matches.partition_point(|found| found.end <= line.start);
             for found in matches[first..].iter().take_while(|found| found.start < line.end) {
@@ -107,7 +107,7 @@ impl Prototype {
             }
             let overlap = selected.start.max(line.start)..selected.end.min(line.end);
             if !overlap.is_empty() {
-                let selection_style = HighlightStyle { background_color: Some(tone(dark, 0x1e3a8a, 0xbfdbfe).into()), ..HighlightStyle::default() };
+                let selection_style = HighlightStyle { background_color: Some(color(dark, Color::Selection).into()), ..HighlightStyle::default() };
                 highlights.push((overlap.start - start..overlap.end - start, selection_style));
             }
             // The full-size text under a script stays for layout, caret and clicks, but is not drawn;
@@ -152,7 +152,7 @@ impl Prototype {
                 move |_, _, window, cx| {
                     let caret = caret_column.and_then(|column| caret_origin(&layout, column, caret_next)).map(|origin| Bounds::new(origin, size(px(1.5), layout.line_height())));
                     if let Some(caret) = caret {
-                        let color = crate::high_contrast::caret().unwrap_or_else(|| rgb(CARET));
+                        let color = color(dark, Color::Caret);
                         window.paint_quad(fill(caret, color));
                     }
                     // The small script text: 80% of the line, above or below the baseline. The

@@ -96,8 +96,9 @@ pub fn release_unused(in_use: &HashSet<(&str, bool)>, font_size: f32, dark: bool
 
 fn lay_out(tex: &str, display: bool, em: f32, dark: bool, renderer: &SvgRenderer) -> Rendered {
     let ast = ratex_parser::parser::parse(tex).map_err(|err| Arc::from(err.to_string()))?;
-    // The preview's text colour (styles.css --fg), so formulas follow the theme.
-    let color = if dark { Color::rgb(0.98, 0.98, 0.98) } else { Color::rgb(0.094, 0.094, 0.106) };
+    // The preview's text colour, so formulas follow the theme and a high-contrast palette.
+    let ink = crate::theme::color(dark, crate::theme::Color::PreviewText);
+    let color = Color::rgb(ink.r, ink.g, ink.b);
     let options = LayoutOptions { style: if display { MathStyle::Display } else { MathStyle::Text }, color, ..LayoutOptions::default() };
     let boxed = layout(&ast, &options);
     validate_layout(&boxed).map_err(Arc::from)?;

@@ -18,7 +18,7 @@ pub(super) fn indicator(list: &ListState, dark: bool) -> AnyElement {
     let content = height + max;
     let thumb = (height * height / content).max(24.0_f32.min(height)).min(height);
     let top = offset / max * (height - thumb);
-    let color = tone(dark, 0x52525b, 0xa1a1aa);
+    let color = color(dark, Color::Scrollbar);
     div()
         .absolute()
         .right(px(2.))
@@ -41,7 +41,7 @@ pub(super) fn horizontal_indicator(scroll: &ScrollHandle, dark: bool) -> AnyElem
     let content = width + max;
     let thumb = (width * width / content).max(24.0_f32.min(width)).min(width);
     let left = offset / max * (width - thumb);
-    let color = tone(dark, 0x52525b, 0xa1a1aa);
+    let color = color(dark, Color::Scrollbar);
     div()
         .absolute()
         .left(px(2.))

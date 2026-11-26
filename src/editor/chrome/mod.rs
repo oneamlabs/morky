@@ -13,6 +13,7 @@ use super::*;
 mod menu;
 mod recent;
 mod settings;
+mod title_bar;
 
 pub use menu::*;
 
@@ -124,16 +125,6 @@ pub mod settings_slot {
 
     /// One past the last slot: the number of handles the panel needs.
     pub const COUNT: usize = CLOSE + 1;
-}
-
-/// The focus ring: blue, at least 3:1 against every background it is drawn on (WCAG 2.2 non-text contrast).
-pub fn ring(dark: bool) -> gpui::Rgba {
-    tone(dark, 0x60a5fa, 0x2563eb)
-}
-
-/// Text on the chrome's backgrounds that is quieter than the main text, still at least 4.5:1.
-pub fn quiet(dark: bool) -> gpui::Rgba {
-    tone(dark, 0xa1a1aa, 0x52525b)
 }
 
 fn toggled(on: bool) -> Toggled {
@@ -288,8 +279,8 @@ impl Prototype {
             .gap_1()
             .px_2()
             .py_1()
-            .bg(tone(dark, 0x27272a, 0xe4e4e7))
-            .text_size(px(13.))
+            .bg(color(dark, Color::Surface))
+            .text_size(px(theme::CHROME_TEXT))
             .child(self.tool_button("tool-editor", "Editor", if editor { "icons/editor.svg" } else { "icons/editor-off.svg" }, Command::ToggleEditor, editor, cx))
             .child(self.tool_button("tool-preview", "Preview", if preview { "icons/preview.svg" } else { "icons/preview-off.svg" }, Command::TogglePreview, preview, cx))
             .child(self.tool_button("tool-outline", "Outline", "icons/outline.svg", Command::ToggleOutline, outline, cx))
@@ -298,9 +289,9 @@ impl Prototype {
     /// A toolbar toggle button; `on` draws it pressed.
     fn tool_button(&self, id: &'static str, label: &'static str, icon: &'static str, command: Command, on: bool, cx: &mut Context<Self>) -> Stateful<gpui::Div> {
         let dark = self.dark;
-        let color = tone(dark, 0xfafafa, 0x18181b);
-        let background = if on { tone(dark, 0x52525b, 0xd4d4d8) } else { tone(dark, 0x27272a, 0xe4e4e7) };
-        let hover = if on { tone(dark, 0x63636e, 0xc4c4c8) } else { tone(dark, 0x3f3f46, 0xd4d4d8) };
+        let text_color = color(dark, Color::Text);
+        let background = if on { color(dark, Color::Pressed) } else { color(dark, Color::Surface) };
+        let hover = if on { color(dark, Color::PressedHover) } else { color(dark, Color::Hover) };
         focus_ring(
             div()
                 .id(id)
@@ -315,11 +306,12 @@ impl Prototype {
                 .gap_1()
                 .px_2()
                 .py_1()
+                .rounded(px(theme::RADIUS_CONTROL))
                 .bg(background)
                 .when(on, |button| button.font_weight(gpui::FontWeight::BOLD))
                 .hover(move |style| style.bg(hover))
-                .text_color(color)
-                .child(svg().path(icon).w(px(16.)).h(px(16.)).text_color(color))
+                .text_color(text_color)
+                .child(svg().path(icon).w(px(16.)).h(px(16.)).text_color(text_color))
                 .child(label)
                 .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                     this.run(command, window, cx);
@@ -341,7 +333,7 @@ impl Prototype {
                 let label = if dirty { format!("{name}, unsaved changes") } else { name.clone() };
                 let shown = if dirty { format!("{name} •") } else { name.clone() };
                 let current = index == active;
-                let background = if current { tone(dark, 0x3f3f46, 0xffffff) } else { tone(dark, 0x27272a, 0xe4e4e7) };
+                let background = if current { color(dark, Color::Card) } else { color(dark, Color::Surface) };
                 div()
                     .id(("tab", index))
                     .role(Role::Tab)
@@ -355,8 +347,9 @@ impl Prototype {
                     .items_center()
                     .px_2()
                     .py_1()
+                    .rounded_t(px(theme::RADIUS_CONTROL))
                     .bg(background)
-                    .hover(move |style| style.bg(tone(dark, 0x3f3f46, 0xd4d4d8)))
+                    .hover(move |style| style.bg(color(dark, Color::Hover)))
                     .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                         this.activate_tab(index, cx);
                         this.restore_editor_focus(window, cx);
@@ -388,7 +381,7 @@ impl Prototype {
                 .flex_none()
                 .px_3()
                 .py_1()
-                .hover(|style| style.bg(tone(dark, 0x3f3f46, 0xd4d4d8)))
+                .hover(|style| style.bg(color(dark, Color::Hover)))
                 .child("+"),
             dark,
         )
@@ -402,8 +395,9 @@ impl Prototype {
             .aria_label("Open files")
             .flex()
             .flex_row()
+            .flex_1()
+            .min_w(px(0.))
             .items_center()
-            .bg(tone(dark, 0x27272a, 0xe4e4e7))
             .child(row)
             .child(new_tab)
     }
@@ -431,8 +425,9 @@ impl Prototype {
                     .tab_stop(true)
                     .px_2()
                     .py(px(3.))
-                    .bg(tone(dark, 0x3f3f46, 0xffffff))
-                    .text_color(tone(dark, 0xfafafa, 0x18181b))
+                    .rounded(px(theme::RADIUS_CONTROL))
+                    .bg(color(dark, Color::Card))
+                    .text_color(color(dark, Color::Text))
                     .child(label),
                 dark,
             )
@@ -449,8 +444,8 @@ impl Prototype {
                 .gap_2()
                 .px_3()
                 .py_1()
-                .text_size(px(13.))
-                .bg(tone(dark, 0x27272a, 0xe4e4e7))
+                .text_size(px(theme::CHROME_TEXT))
+                .bg(color(dark, Color::Surface))
                 .text_color(quiet(dark))
                 .child(find.query.clone())
                 .child(div().id("find-count").role(Role::Status).aria_label(SharedString::from(count.clone())).min_w(px(80.)).child(count))
@@ -528,9 +523,9 @@ impl Prototype {
             .gap_4()
             .px_3()
             .py(px(3.))
-            .text_size(px(12.))
+            .text_size(px(theme::CAPTION_TEXT))
             .whitespace_nowrap()
-            .bg(tone(dark, 0x27272a, 0xe4e4e7))
+            .bg(color(dark, Color::Surface))
             .text_color(quiet(dark))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::close_menu))
             // A long path gives way to the counts, and is cut at the start so the file name stays.
@@ -538,7 +533,7 @@ impl Prototype {
             .child(div().id("path").role(Role::Label).aria_value(path.clone()).flex_1().min_w(px(0.)).overflow_hidden().text_ellipsis_start().child(path))
             // An alert, so a screen reader reads a failed save or open out when it happens.
             .children(status.map(|status| {
-                div().id("status-message").role(Role::Alert).aria_label(SharedString::from(status.clone())).flex_none().text_color(tone(dark, 0xfca5a5, 0xb91c1c)).child(status)
+                div().id("status-message").role(Role::Alert).aria_label(SharedString::from(status.clone())).flex_none().text_color(color(dark, Color::Error)).child(status)
             }))
             .children(items.into_iter().enumerate().map(|(index, (item, hint))| status_item(index, item, hint, dark)))
     }
@@ -569,11 +564,13 @@ impl Render for Hint {
         div()
             .px_2()
             .py_1()
-            .text_size(px(12.))
-            .bg(tone(self.dark, 0x3f3f46, 0xffffff))
-            .text_color(tone(self.dark, 0xfafafa, 0x18181b))
+            .text_size(px(theme::CAPTION_TEXT))
+            .rounded(px(theme::RADIUS_OVERLAY))
+            .shadow_md()
+            .bg(color(self.dark, Color::Card))
+            .text_color(color(self.dark, Color::Text))
             .border_1()
-            .border_color(tone(self.dark, 0x52525b, 0xd4d4d8))
+            .border_color(color(self.dark, Color::StrokeStrong))
             .child(self.text.clone())
     }
 }

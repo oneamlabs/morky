@@ -37,7 +37,22 @@ pub enum Token {
 
 impl Token {
     /// The app's editor style for each tag (editor.ts) and its `--hl-*` light-dark pairs.
+    ///
+    /// These are a highlighter theme, not the UI palette, so their hues live here rather than in
+    /// `theme`. Under a Windows high-contrast theme they collapse onto the system colours instead:
+    /// a link stays a link, everything else becomes the theme's text.
     pub fn style(self, dark: bool) -> HighlightStyle {
+        if let Some(system) = crate::high_contrast::syntax_color(self) {
+            let style = HighlightStyle { color: Some(system.into()), ..HighlightStyle::default() };
+            return match self {
+                Token::Heading => HighlightStyle { font_weight: Some(FontWeight::BOLD), ..style },
+                Token::Strong => HighlightStyle { font_weight: Some(FontWeight::BOLD), ..style },
+                Token::Emphasis => HighlightStyle { font_style: Some(FontStyle::Italic), ..style },
+                Token::Strike => HighlightStyle { strikethrough: Some(StrikethroughStyle { thickness: px(1.), color: None }), ..style },
+                Token::Comment => HighlightStyle { font_style: Some(FontStyle::Italic), ..style },
+                _ => style,
+            };
+        }
         let color = |light: u32, dark_value: u32| HighlightStyle { color: Some(rgb(if dark { dark_value } else { light }).into()), ..HighlightStyle::default() };
         match self {
             Token::Heading => HighlightStyle { font_weight: Some(FontWeight::BOLD), ..color(0x0550ae, 0x79c0ff) },
@@ -55,7 +70,7 @@ impl Token {
             Token::Function => color(0x8250df, 0xd2a8ff),
             Token::Type => color(0x953800, 0xffa657),
             Token::Property => color(0x0550ae, 0x79c0ff),
-            Token::Mark => HighlightStyle { background_color: Some(rgb(if dark { 0x4b3218 } else { 0xffeed8 }).into()), ..HighlightStyle::default() },
+            Token::Mark => HighlightStyle { background_color: Some(crate::theme::color(dark, crate::theme::Color::Mark).into()), ..HighlightStyle::default() },
         }
     }
 }

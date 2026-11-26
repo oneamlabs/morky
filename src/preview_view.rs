@@ -9,8 +9,7 @@ use std::time::{Duration, Instant};
 
 use gpui::{AppContext, ClickEvent, Context, FontWeight, IntoElement, Pixels, Role, SharedString, StyledText, SvgRenderer, Window, div, img, prelude::*, px};
 
-use crate::editor;
-use crate::high_contrast::tone;
+use crate::theme::{self, color, Color};
 use crate::{diagrams, math};
 use crate::preview::{self, Align, Block, Kind, Run, Table};
 use crate::syntax::Span;
@@ -35,11 +34,11 @@ impl Look {
     }
 
     fn border(&self) -> gpui::Rgba {
-        tone(self.dark, 0x3f3f46, 0xd4d4d8)
+        color(self.dark, Color::Stroke)
     }
 
     fn muted(&self) -> gpui::Rgba {
-        tone(self.dark, 0xa1a1aa, 0x52525b)
+        color(self.dark, Color::TextQuiet)
     }
 }
 
@@ -139,7 +138,7 @@ fn preview_block<V: PreviewHost>(block: &Block, look: &Look, cx: &mut Context<V>
     }
     let body = styled_runs(&block.runs, size, look, cx);
     match block.kind {
-        Kind::Quote => div().mb_3().pl_3().border_l_2().border_color(tone(dark, 0x71717a, 0xa1a1aa)).child(body),
+        Kind::Quote => div().mb_3().pl_3().border_l_2().border_color(color(dark, Color::QuoteBorder)).child(body),
         Kind::Item { ordered, checked } => {
             // Task items show their box, read-only, as the app's task lists do.
             let marker = match (checked, ordered) {
@@ -150,7 +149,7 @@ fn preview_block<V: PreviewHost>(block: &Block, look: &Look, cx: &mut Context<V>
             };
             div().mb_1().flex().flex_row().gap_2().child(marker).child(body)
         }
-        Kind::Code => div().mb_3().px_3().py_2().font_family(look.mono.clone()).bg(tone(dark, 0x27272a, 0xf4f4f5)).child(body),
+        Kind::Code => div().mb_3().px_3().py_2().font_family(look.mono.clone()).bg(color(dark, Color::CodeBlock)).child(body),
         // Like the app: headings are bold, and h1 and h2 are underlined by a rule.
         Kind::Heading(level) => div()
             .mt_2()
@@ -185,7 +184,7 @@ fn code_block(text: &str, spans: &[Span], look: &Look) -> gpui::Div {
         .py_2()
         .font_family(look.mono.clone())
         .text_size(look.code_size())
-        .bg(tone(look.dark, 0x27272a, 0xf4f4f5))
+        .bg(color(look.dark, Color::CodeBlock))
         .child(StyledText::new(text.to_string()).with_highlights(highlights))
 }
 
@@ -203,7 +202,7 @@ fn math_block(tex: &str, look: &Look) -> gpui::Div {
             .py_2()
             .font_family(look.mono.clone())
             .text_size(look.code_size())
-            .bg(tone(look.dark, 0x27272a, 0xf4f4f5))
+            .bg(color(look.dark, Color::CodeBlock))
             .child(tex.to_string())
             .child(div().pt_1().text_size(px(12.)).text_color(error_color(look.dark)).child(format!("TeX error: {err}"))),
     }
@@ -262,7 +261,7 @@ fn formula_image(formula: &math::Formula) -> gpui::Img {
 }
 
 fn error_color(dark: bool) -> gpui::Rgba {
-    tone(dark, 0xfca5a5, 0xb91c1c)
+    color(dark, Color::Error)
 }
 
 /// Relative images load from the document's folder; remote ones are blocked. Anything else shows
@@ -331,7 +330,7 @@ fn table_block<V: PreviewHost>(table: &Table, look: &Look, cx: &mut Context<V>) 
         })
         .collect();
     let size = px(look.font_size);
-    let shade = tone(look.dark, 0x18181b, 0xf4f4f5);
+    let shade = color(look.dark, Color::Base);
     let mut rows = Vec::with_capacity(table.rows.len());
     for (index, row) in table.rows.iter().enumerate() {
         let mut cells = Vec::with_capacity(columns);
@@ -472,10 +471,10 @@ fn styled_piece<V: PreviewHost>(text: &str, run: &Run, size: Pixels, look: &Look
     }
     if style.mark {
         // The app's --mark.
-        piece = piece.bg(tone(dark, 0x4b3218, 0xffeed8));
+        piece = piece.bg(color(dark, Color::Mark));
     }
     if style.code {
-        piece = piece.font_family(look.mono.clone()).text_size(look.code_size()).bg(tone(dark, 0x3f3f46, 0xe4e4e7)).px_1();
+        piece = piece.font_family(look.mono.clone()).text_size(look.code_size()).bg(color(dark, Color::CodeInline)).px_1();
     }
     let id = ("piece", index << 16 | word.unwrap_or(0));
     if let Some(link) = style.link.clone() {
@@ -493,7 +492,7 @@ fn styled_piece<V: PreviewHost>(text: &str, run: &Run, size: Pixels, look: &Look
 /// focused control gets. Clicks, Enter and a screen reader's "click" go to `Prototype::follow_link`,
 /// which applies the app's rules.
 fn clickable<V: PreviewHost>(piece: gpui::Stateful<gpui::Div>, text: &str, link: Arc<str>, selected: bool, dark: bool, cx: &mut Context<V>) -> gpui::Stateful<gpui::Div> {
-    let ring = editor::ring(dark);
+    let ring = crate::theme::ring(dark);
     piece
         .role(Role::Link)
         // A full stop moved into the link for wrapping is not part of its name.
@@ -501,7 +500,7 @@ fn clickable<V: PreviewHost>(piece: gpui::Stateful<gpui::Div>, text: &str, link:
         .focusable()
         .when(selected, |piece| piece.border_1().border_color(ring))
         .focus_visible(move |style| style.border_1().border_color(ring))
-        .text_color(tone(dark, 0x58a6ff, 0x0969da))
+        .text_color(color(dark, Color::Link))
         .underline()
         .cursor_pointer()
         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.follow_preview_link(&link, window, cx)))
@@ -529,11 +528,13 @@ impl gpui::Render for TitleTip {
         div()
             .px_2()
             .py_1()
-            .text_size(px(12.))
-            .bg(tone(self.dark, 0x3f3f46, 0xffffff))
-            .text_color(tone(self.dark, 0xfafafa, 0x18181b))
+            .text_size(px(theme::CAPTION_TEXT))
+            .rounded(px(theme::RADIUS_OVERLAY))
+            .shadow_md()
+            .bg(color(self.dark, Color::Card))
+            .text_color(color(self.dark, Color::Text))
             .border_1()
-            .border_color(tone(self.dark, 0x52525b, 0xd4d4d8))
+            .border_color(color(self.dark, Color::StrokeStrong))
             .child(self.text.clone())
     }
 }

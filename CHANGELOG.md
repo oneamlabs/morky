@@ -4,6 +4,20 @@ Notable changes to Marky, newest first. The format follows [Keep a Changelog](ht
 
 ## [Unreleased]
 
+## [0.4.8] - 2026-11-26
+
+### Changed
+
+- The window now uses the Windows 11 (WinUI 3) look: the Fluent surface, stroke and text colours in both themes, 4 px corners on controls and 8 px on menus and tooltips, soft shadows under overlays, and the Windows 11 type scale.
+- The app follows your Windows accent colour, and picks it up within a second when you change it in Settings. Every accent-coloured element remains readable in both themes.
+- The title bar is drawn by the app, so it follows the app's theme instead of only Windows'. The tabs now live in the title bar, with standard Windows minimize, maximize and close buttons; resize borders, rounded corners, snap layouts and double-click-to-maximize all still work.
+
+### Fixed
+
+- The find field's placeholder was too low-contrast in the dark theme (3.67:1).
+- Code colours and math formulas now follow a Windows high-contrast theme, as the rest of the UI already did.
+- The menu bar was invisible against the window in the light theme.
+
 ## [0.4.7] - 2026-11-26
 
 ### Added
