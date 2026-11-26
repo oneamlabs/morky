@@ -4,6 +4,10 @@ Notable changes to Marky, newest first. The format follows [Keep a Changelog](ht
 
 ## [Unreleased]
 
+### Fixed
+
+- Editor only and Preview only now fill the whole window instead of leaving half of it empty at the previous split.
+
 ## [0.4.8] - 2026-11-26
 
 ### Changed

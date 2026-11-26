@@ -387,16 +387,18 @@ impl Prototype {
     fn editor_area(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let Some(source) = &self.source else { return div().into_any_element() };
         let source = source.clone();
-        let wrapper = div().flex().flex_grow(self.split).flex_basis(px(0.)).min_w(px(0.)).h_full().child(source);
+        let grow = if self.settings.preview_visible() { self.split } else { 1.0 };
+        let wrapper = div().flex().flex_grow(grow).flex_basis(px(0.)).min_w(px(0.)).h_full().child(source);
         self.editor_actions(wrapper, cx).into_any_element()
     }
 
     /// The active document's preview, filling the flex row. Cached until the pane is notified.
     fn preview_area(&mut self, _cx: &mut Context<Self>) -> AnyElement {
-        let Some(views) = self.active_views() else { return div().flex_grow(1.0 - self.split).into_any_element() };
+        let grow = if self.settings.show_editor { 1.0 - self.split } else { 1.0 };
+        let Some(views) = self.active_views() else { return div().flex_grow(grow).into_any_element() };
         let preview = views.preview.clone();
         div()
-            .flex_grow(1.0 - self.split)
+            .flex_grow(grow)
             .flex_basis(px(0.))
             .min_w(px(0.))
             .h_full()
