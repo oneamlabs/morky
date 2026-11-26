@@ -4,6 +4,8 @@ Notable changes to Marky, newest first. The format follows [Keep a Changelog](ht
 
 ## [Unreleased]
 
+## [0.4.9] - 2026-11-26
+
 ### Added
 
 - A **Help** menu, as in other Windows apps. **Help > About Marky** shows the version, licence and log location, with a **Check for updates** button that asks GitHub for the latest release and says whether a newer version exists, with a Download button when one does. **Help > Marky on GitHub** opens the releases page.
