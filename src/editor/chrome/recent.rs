@@ -68,10 +68,10 @@ impl Prototype {
             .overflow_y_scroll()
             .px_3()
             .py_2()
-            .text_size(px(13.))
-            .bg(tone(dark, 0x18181b, 0xf4f4f5))
+            .text_size(px(theme::CHROME_TEXT))
+            .bg(color(dark, Color::Base))
             .border_l_1()
-            .border_color(tone(dark, 0x3f3f46, 0xd4d4d8))
+            .border_color(color(dark, Color::Stroke))
             .child(
                 div()
                     .flex()

@@ -3,6 +3,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod allowlist;
+mod accent;
 mod diagnostics;
 mod files;
 mod store;
@@ -24,6 +25,7 @@ mod preview_view;
 mod settings;
 mod syntax;
 mod text_field;
+pub(crate) mod theme;
 
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -105,7 +107,11 @@ fn main() {
                     window_bounds: Some(window_bounds),
                     titlebar: Some(TitlebarOptions {
                         title: Some("Marky".into()),
-                        appears_transparent: false,
+                        // The app draws its own caption row (`editor/chrome/title_bar.rs`) so the
+                        // title bar follows the app's theme, not only Windows'. Resize borders,
+                        // DWM rounding and snap layouts survive: GPUI keeps `WS_THICKFRAME` and
+                        // maps the caption buttons' `WindowControlArea`s to Win32 hit-test results.
+                        appears_transparent: true,
                         traffic_light_position: None,
                     }),
                     ..Default::default()

@@ -1,48 +1,57 @@
 //! WCAG 2.2 contrast for Marky's colours, in both themes: 4.5:1 for text (AA), 3:1 for the focus
 //! ring against what it is drawn on.
-//! Save's dimmed label is left out: WCAG exempts inactive controls.
+//!
+//! These read `theme`'s real values rather than a copy, so changing a token is caught here. A test
+//! that asserts its own list would pass while the UI failed, which is the bug this replaces.
 
 #![cfg(test)]
 
 use gpui::{Rgba, rgb};
 
 use crate::syntax::Token;
+use crate::theme::{self, Color, Palette};
 
 fn luminance(color: Rgba) -> f32 {
     let channel = |value: f32| if value <= 0.04045 { value / 12.92 } else { ((value + 0.055) / 1.055).powf(2.4) };
     0.2126 * channel(color.r) + 0.7152 * channel(color.g) + 0.0722 * channel(color.b)
 }
 
-fn ratio(a: Rgba, b: Rgba) -> f32 {
-    let (a, b) = (luminance(a), luminance(b));
+fn ratio(a: u32, b: u32) -> f32 {
+    let (a, b) = (luminance(rgb(a)), luminance(rgb(b)));
     (a.max(b) + 0.05) / (a.min(b) + 0.05)
 }
 
-/// (what, text, background) in one theme, as `0xRRGGBB` values.
-fn text_pairs(dark: bool) -> Vec<(&'static str, u32, u32)> {
-    let pick = |dark_value: u32, light_value: u32| if dark { dark_value } else { light_value };
-    let text = pick(0xfafafa, 0x18181b);
-    let quiet = pick(0xa1a1aa, 0x52525b);
+/// Every (what, text, background) pair the UI actually draws, by role.
+fn text_pairs(palette: &Palette) -> Vec<(&'static str, u32, u32)> {
     vec![
-        ("text on the editor", text, pick(0x18181b, 0xfafafa)),
-        ("text on the preview", pick(0xe4e4e7, 0x18181b), pick(0x09090b, 0xffffff)),
-        ("text on the toolbar and tabs", text, pick(0x27272a, 0xe4e4e7)),
-        ("text on the menu bar", text, pick(0x27272a, 0xf4f4f5)),
-        ("text on a menu", text, pick(0x3f3f46, 0xffffff)),
-        ("text on a highlighted menu item", text, pick(0x52525b, 0xdbeafe)),
-        ("menu shortcut hints", pick(0xd4d4d8, 0x52525b), pick(0x3f3f46, 0xffffff)),
-        ("shortcut hints on a highlighted item", pick(0xd4d4d8, 0x52525b), pick(0x52525b, 0xdbeafe)),
-        ("quiet text on the path and status bars", quiet, pick(0x27272a, 0xe4e4e7)),
-        ("quiet text on the outline and settings", quiet, pick(0x18181b, 0xf4f4f5)),
-        ("quiet text on the preview", quiet, pick(0x09090b, 0xffffff)),
-        ("the current heading in the outline", pick(0x60a5fa, 0x2563eb), pick(0x18181b, 0xf4f4f5)),
-        ("links in the preview", pick(0x58a6ff, 0x0969da), pick(0x09090b, 0xffffff)),
-        ("errors on the status bar", pick(0xfca5a5, 0xb91c1c), pick(0x27272a, 0xe4e4e7)),
-        ("errors in the preview", pick(0xfca5a5, 0xb91c1c), pick(0x09090b, 0xffffff)),
-        ("text on a selection", text, pick(0x1e3a8a, 0xbfdbfe)),
-        ("text on a find match", text, pick(0x713f12, 0xfef08a)),
-        ("text on ==marked== text", text, pick(0x4b3218, 0xffeed8)),
-        ("text on inline code", text, pick(0x3f3f46, 0xe4e4e7)),
+        ("text on the editor", palette.text, palette.editor),
+        ("text on the base surface", palette.text, palette.base),
+        ("preview body on the preview", palette.preview_text, palette.preview),
+        ("text on the toolbar and tabs", palette.text, palette.surface),
+        ("text on the menu bar", palette.text, palette.menu_bar),
+        ("text on a menu", palette.text, palette.card),
+        ("text on a highlighted menu item", palette.text, palette.highlight),
+        ("menu shortcut hints", palette.menu_shortcut, palette.card),
+        ("shortcut hints on a highlighted item", palette.menu_shortcut, palette.highlight),
+        ("quiet text on the path and status bars", palette.text_quiet, palette.surface),
+        ("quiet text on the outline and settings", palette.text_quiet, palette.base),
+        ("quiet text on the preview", palette.text_quiet, palette.preview),
+        ("text on a card tooltip", palette.text, palette.card),
+        ("a placeholder in a field", palette.text_disabled, palette.field),
+        ("text typed into a field", palette.text, palette.field),
+        ("the current heading in the outline", palette.accent_text, palette.base),
+        ("accent text on a card", palette.accent_text, palette.card),
+        ("links in the preview", palette.link, palette.preview),
+        ("errors on the status bar", palette.error, palette.surface),
+        ("errors in the preview", palette.error, palette.preview),
+        ("text on a selection", palette.text, palette.selection),
+        ("text on a find match", palette.text, palette.find_match),
+        ("text on ==marked== text", palette.text, palette.mark),
+        ("text on inline code", palette.text, palette.code_inline),
+        ("text on a code block", palette.preview_text, palette.code_block),
+        ("a menu bar item under the pointer", palette.text, palette.highlight),
+        ("a selected outline row", palette.text, palette.surface),
+        ("a tab's label on the active tab", palette.text, palette.card),
     ]
 }
 
@@ -50,8 +59,9 @@ fn text_pairs(dark: bool) -> Vec<(&'static str, u32, u32)> {
 fn text_meets_aa_in_both_themes() {
     let mut failures = Vec::new();
     for dark in [false, true] {
-        for (what, text, background) in text_pairs(dark) {
-            let contrast = ratio(rgb(text), rgb(background));
+        let palette = theme::palette(dark);
+        for (what, text, background) in text_pairs(palette) {
+            let contrast = ratio(text, background);
             if contrast < 4.5 {
                 failures.push(format!("{} theme, {what}: {contrast:.2}:1", if dark { "dark" } else { "light" }));
             }
@@ -81,10 +91,13 @@ fn syntax_colours_meet_aa_on_the_editor() {
     ];
     let mut failures = Vec::new();
     for dark in [false, true] {
-        let background = rgb(if dark { 0x18181b } else { 0xfafafa });
+        let background = rgb(theme::value(dark, Color::Editor));
         for token in tokens {
             let Some(color) = token.style(dark).color else { continue };
-            let contrast = ratio(Rgba::from(color), background);
+            let contrast = {
+                let (a, b) = (luminance(Rgba::from(color)), luminance(background));
+                (a.max(b) + 0.05) / (a.min(b) + 0.05)
+            };
             if contrast < 4.5 {
                 failures.push(format!("{} theme, {token:?}: {contrast:.2}:1", if dark { "dark" } else { "light" }));
             }
@@ -96,11 +109,19 @@ fn syntax_colours_meet_aa_on_the_editor() {
 #[test]
 fn the_focus_ring_stands_out_from_every_background_it_is_drawn_on() {
     for dark in [false, true] {
-        let ring = crate::editor::ring(dark);
-        let backgrounds: &[u32] = if dark { &[0x27272a, 0x18181b, 0x09090b, 0x3f3f46] } else { &[0xe4e4e7, 0xf4f4f5, 0xffffff, 0xfafafa] };
-        for background in backgrounds {
-            let contrast = ratio(ring, rgb(*background));
-            assert!(contrast >= 3.0, "ring on {background:06x}: {contrast:.2}:1");
+        let palette = theme::palette(dark);
+        let backgrounds = [
+            ("the toolbar", palette.surface),
+            ("the base surface", palette.base),
+            ("the preview", palette.preview),
+            ("a card", palette.card),
+            ("the menu bar", palette.menu_bar),
+        ];
+        for (what, background) in backgrounds {
+            let ring = luminance(theme::ring(dark));
+            let behind = luminance(rgb(background));
+            let contrast = (ring.max(behind) + 0.05) / (ring.min(behind) + 0.05);
+            assert!(contrast >= 3.0, "ring on {what} ({} theme): {contrast:.2}:1", if dark { "dark" } else { "light" });
         }
     }
 }

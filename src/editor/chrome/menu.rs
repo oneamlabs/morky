@@ -73,8 +73,10 @@ impl Prototype {
             .flex()
             .flex_row()
             .items_center()
-            .bg(tone(self.dark, 0x27272a, 0xf4f4f5))
-            .text_size(px(13.));
+            .bg(color(self.dark, Color::MenuBar))
+            .border_b_1()
+            .border_color(color(self.dark, Color::Stroke))
+            .text_size(px(theme::CHROME_TEXT));
         for (menu, label) in MENUS {
             bar = bar.child(self.menu_button(label, menu, cx));
         }
@@ -91,7 +93,7 @@ impl Prototype {
             .aria_expanded(opened)
             .px_3()
             .py_1()
-            .when(opened, |button| button.bg(tone(dark, 0x3f3f46, 0xe4e4e7)))
+            .when(opened, |button| button.bg(color(dark, Color::MenuBarActive)))
             .child(menu_label(label, label.chars().next().unwrap_or(' ')))
             .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
                 if this.open_menu == Some(menu) {
@@ -180,7 +182,7 @@ impl Prototype {
 
     fn menu_items(&mut self, menu: OpenMenu, cx: &mut Context<Self>) -> Stateful<gpui::Div> {
         let dark = self.dark;
-        let highlight = tone(dark, 0x52525b, 0xdbeafe);
+        let highlight = color(dark, Color::Highlight);
         let column = div()
             .id("menu-items")
             .key_context("Menu")
@@ -189,9 +191,11 @@ impl Prototype {
             .flex()
             .flex_col()
             .py_1()
-            .bg(tone(dark, 0x3f3f46, 0xffffff))
+            .rounded(px(theme::RADIUS_OVERLAY))
+            .shadow_md()
+            .bg(color(dark, Color::Card))
             .border_1()
-            .border_color(tone(dark, 0x52525b, 0xd4d4d8))
+            .border_color(color(dark, Color::StrokeStrong))
             .on_action(cx.listener(|this, _: &MenuNext, window, cx| this.menu_step(1, window, cx)))
             .on_action(cx.listener(|this, _: &MenuPrevious, window, cx| this.menu_step(-1, window, cx)))
             .on_action(cx.listener(|this, _: &MenuLeft, window, cx| this.menu_switch(-1, window, cx)))
@@ -247,11 +251,11 @@ pub fn menu_row(label: &str, shortcut: &str, access: char, checked: Option<bool>
         .px_3()
         .py_1()
         .w(px(240.))
-        .text_color(tone(dark, 0xfafafa, 0x18181b))
+        .text_color(color(dark, Color::Text))
         .child(div().w(px(12.)).child(check))
         .child(menu_label(label, access).flex_1())
-        // Lighter than `quiet` in the dark theme: the menu's background is lighter than the bars'.
-        .child(div().text_color(tone(dark, 0xd4d4d8, 0x52525b)).child(shortcut.to_string()))
+        // Its own role: a shortcut hint is lighter on a dark menu than the bars' quiet text.
+        .child(div().text_color(color(dark, Color::MenuShortcut)).child(shortcut.to_string()))
 }
 
 #[cfg(test)]

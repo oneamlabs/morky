@@ -15,7 +15,7 @@ use crate::editor::{
     Redo, Right, SelectAll, SelectDocumentEnd, SelectDocumentStart, SelectDown, SelectLeft, SelectLineEnd, SelectLineStart, SelectRight,
     SelectUp, SelectWordLeft, SelectWordRight, Undo, Up, WordLeft, WordRight,
 };
-use crate::high_contrast::tone;
+use crate::theme::{color, Color};
 
 pub enum FieldEvent {
     Changed,
@@ -89,7 +89,7 @@ impl Render for TextField {
         let focused = self.focus.is_focused(window);
         let empty = self.text.is_empty();
         let shown: SharedString = if empty { self.placeholder.clone() } else { self.text.clone().into() };
-        let caret = || div().w(px(1.5)).h(px(14.)).bg(tone(dark, 0x2563eb, 0x2563eb));
+        let caret = || div().w(px(1.5)).h(px(14.)).bg(color(dark, Color::Caret));
         div()
             .key_context("TextField")
             .track_focus(&self.focus)
@@ -131,10 +131,11 @@ impl Render for TextField {
             .px_2()
             .py(px(3.))
             .cursor_text()
-            .bg(tone(dark, 0x18181b, 0xffffff))
+            .rounded(px(crate::theme::RADIUS_CONTROL))
+            .bg(color(dark, Color::Field))
             .border_1()
-            .border_color(if focused { tone(dark, 0x2563eb, 0x2563eb) } else { tone(dark, 0x52525b, 0xd4d4d8) })
-            .text_color(if empty { tone(dark, 0x71717a, 0x71717a) } else { tone(dark, 0xfafafa, 0x18181b) })
+            .border_color(if focused { color(dark, Color::Accent) } else { color(dark, Color::StrokeStrong) })
+            .text_color(if empty { color(dark, Color::TextDisabled) } else { color(dark, Color::Text) })
             .whitespace_nowrap()
             .overflow_hidden()
             .flex()
