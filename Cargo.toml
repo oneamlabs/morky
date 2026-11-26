@@ -1,6 +1,6 @@
 [package]
 name = "marky"
-version = "0.4.8"
+version = "0.4.9"
 edition = "2021"
 # `str::floor_char_boundary` is the newest API Marky uses.
 rust-version = "1.91"
@@ -47,8 +47,9 @@ unicode-segmentation = "1"
 notify = "8.2"
 # A watcher callback runs on notify's thread; this hands its event to the GPUI task that owns the view.
 async-channel = "2"
-# Windows high-contrast themes and the user's accent colour, both read once a second.
-windows-sys = { version = "0.61", features = ["Win32_Graphics_Gdi", "Win32_System_Registry", "Win32_UI_Accessibility", "Win32_UI_WindowsAndMessaging"] }
+# Windows high-contrast themes and the user's accent colour, both read once a second. WinHTTP is
+# the update check: the app ships no HTTP client of its own.
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Networking_WinHttp", "Win32_System_Registry", "Win32_UI_Accessibility", "Win32_UI_WindowsAndMessaging"] }
 # The editor buffer. MIT.
 ropey = "1.6"
 # Math: RaTeX lays out TeX like KaTeX, in pure Rust, with KaTeX's fonts embedded. MIT. ~3 MB.

@@ -99,6 +99,17 @@ pub fn accent_text_on(dark: bool, background: u32) -> Rgba {
     gpui::rgb(best)
 }
 
+/// The colour for text drawn on the accent as a fill (a primary button's label).
+///
+/// The accent is arbitrary, so black or white is chosen by whichever reads better on it: WinUI's
+/// `#0078D4` takes white, a pale accent takes black. Neither reaches 4.5:1 on every accent (a
+/// mid-grey is the worst case), but one of them always beats the other, and WinUI does the same.
+pub fn on_accent() -> Rgba {
+    let over_black = contrast(accent(), 0x000000);
+    let over_white = contrast(accent(), 0xffffff);
+    if over_white >= over_black { gpui::rgb(0xffffff) } else { gpui::rgb(0x000000) }
+}
+
 /// Linear blend from `from` towards `to`, `amount` in 0..=1.
 fn mix(from: u32, to: u32, amount: f32) -> u32 {
     let channel = |shift: u32| {
@@ -160,5 +171,26 @@ mod tests {
         assert_eq!(mix(0x000000, 0xffffff, 1.0), 0xffffff);
         assert_eq!(mix(0x000000, 0xffffff, 0.0), 0x000000);
         assert_eq!(mix(0x000000, 0xffffff, 0.5), 0x808080);
+    }
+
+    /// A primary button's label is black or white, whichever reads better on the user's accent.
+    #[test]
+    fn on_accent_picks_the_readable_extreme() {
+        // WinUI's blue is dark enough that a label on it reads: either extreme clears 4.5:1.
+        ACCENT.store(0x0078d4, Ordering::Relaxed);
+        assert!(contrast(0x0078d4, to_rgb(on_accent())) >= 4.5);
+        // A pale accent takes black: white on it would be unreadable.
+        ACCENT.store(0xfff2a0, Ordering::Relaxed);
+        assert_eq!(to_rgb(on_accent()), 0x000000);
+        // A dark accent takes white.
+        ACCENT.store(0x101010, Ordering::Relaxed);
+        assert_eq!(to_rgb(on_accent()), 0xffffff);
+        // Whichever is chosen, it is never the worse of the two.
+        for accent in [0x0078d4, 0xff0000, 0x00ff00, 0xffff00, 0x8000ff, 0x000000, 0xffffff] {
+            ACCENT.store(accent, Ordering::Relaxed);
+            let chosen = to_rgb(on_accent());
+            let other = if chosen == 0xffffff { 0x000000 } else { 0xffffff };
+            assert!(contrast(accent, chosen) >= contrast(accent, other), "accent {accent:06x}");
+        }
     }
 }

@@ -10,6 +10,7 @@ use gpui::{ClickEvent, Role, Stateful, Toggled, transparent_black};
 
 use super::*;
 
+mod about;
 mod menu;
 mod recent;
 mod settings;
@@ -35,6 +36,7 @@ actions!(
         OpenFileMenu,
         OpenEditMenu,
         OpenViewMenu,
+        OpenHelpMenu,
         MenuNext,
         MenuPrevious,
         MenuLeft,
@@ -93,13 +95,25 @@ pub enum Command {
     LargerText,
     SmallerText,
     About,
+    CheckForUpdates,
+    OpenProjectPage,
 }
 
 impl Command {
     /// Commands that put the focus somewhere of their own; the others hand it back to the editor
     /// when they come from a menu or the toolbar.
     fn moves_focus(self) -> bool {
-        matches!(self, Self::Find | Self::Replace | Self::Settings | Self::Open | Self::OpenRecent | Self::About | Self::Quit)
+        matches!(
+            self,
+            Self::Find
+                | Self::Replace
+                | Self::Settings
+                | Self::Open
+                | Self::OpenRecent
+                | Self::About
+                | Self::CheckForUpdates
+                | Self::Quit
+        )
     }
 }
 
@@ -198,7 +212,9 @@ impl Prototype {
             }
             Command::LargerText => self.step_font(1, cx),
             Command::SmallerText => self.step_font(-1, cx),
-            Command::About => show_about(window, cx),
+            Command::About => self.open_about(window, cx),
+            Command::CheckForUpdates => self.check_for_updates(window, cx),
+            Command::OpenProjectPage => cx.open_url(crate::update::RELEASES_URL),
         }
         cx.notify();
     }
@@ -221,6 +237,7 @@ impl Prototype {
             .on_action(cx.listener(|this, _: &OpenFileMenu, window, cx| this.open_menu_from_keys(OpenMenu::File, window, cx)))
             .on_action(cx.listener(|this, _: &OpenEditMenu, window, cx| this.open_menu_from_keys(OpenMenu::Edit, window, cx)))
             .on_action(cx.listener(|this, _: &OpenViewMenu, window, cx| this.open_menu_from_keys(OpenMenu::View, window, cx)))
+            .on_action(cx.listener(|this, _: &OpenHelpMenu, window, cx| this.open_menu_from_keys(OpenMenu::Help, window, cx)))
             .on_action(cx.listener(|_, _: &FocusNext, window, cx| window.focus_next(cx)))
             .on_action(cx.listener(|_, _: &FocusPrevious, window, cx| window.focus_prev(cx)))
     }
@@ -573,22 +590,6 @@ impl Render for Hint {
             .border_color(color(self.dark, Color::StrokeStrong))
             .child(self.text.clone())
     }
-}
-
-/// Version, licence and log location. A prompt rather than a hidden dialog, so it needs no new
-/// window and works with the same focus path as the discard prompt.
-fn show_about(window: &mut Window, cx: &mut Context<Prototype>) {
-    let log = crate::settings::own_local_dir().join("marky.log");
-    let message = format!(
-        "Marky {}\n\nA fast Markdown editor for Windows.\nMIT licence. Third-party notices ship with Marky.\n\nLog: {}",
-        env!("CARGO_PKG_VERSION"),
-        log.display()
-    );
-    let answer = window.prompt(PromptLevel::Info, &message, None, &["OK"], cx);
-    cx.spawn_in(window, async move |_, _| {
-        let _ = answer.await;
-    })
-    .detach();
 }
 
 /// A focusable control with the ring drawn in its border, which is transparent until the control

@@ -308,6 +308,21 @@ try {
   Press (Find $T::Button 'Close settings') | Out-Null
   Write-Check 'Close settings puts the panel away' ((Wait-Until { -not (Find-Now $T::Group 'Settings') } 10) -as [bool])
 
+  # ----- Help > About Marky: the box, its update check and its close -----
+
+  Run-Menu 'Help' 'About Marky' | Out-Null
+  $about = Wait-Until { Find-Now $null 'About Marky' } 10
+  Write-Check 'Help > About Marky opens the About box' ([bool]$about)
+  Write-Check 'the About box names the version' ([bool](Find-Like '^Version \d+\.\d+\.\d+$'))
+  $checkButton = Find $T::Button 'Check for updates'
+  Write-Check 'the About box has a Check for updates button' ([bool]$checkButton)
+  # The check needs the network; offline it reports the failure, which is still an answer on screen.
+  Press $checkButton | Out-Null
+  $answered = Wait-Until { Find-Like '^(Marky is up to date|Version \d+\.\d+\.\d+ is available|The check failed:)' } 30
+  Write-Check 'the update check shows an answer' ([bool]$answered) "$(if ($answered) { $answered.Current.Name })"
+  [E2e.Win]::Key($window, 0x1B, 0x01)
+  Write-Check 'Esc closes the About box' ((Wait-Until { -not (Find-Now $null 'About Marky') } 10) -as [bool])
+
   Press (Find $T::Hyperlink 'link to the second file') | Out-Null
   Write-Check 'relative .md link opens in a new tab' ((Wait-Until { (Title-Of $app) -eq 'second.md - Marky' } 10) -as [bool]) (Title-Of $app)
   Press (Find $T::Button 'Close second.md') | Out-Null

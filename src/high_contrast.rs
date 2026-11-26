@@ -92,7 +92,6 @@ pub fn refresh_periodically() -> bool {
 }
 
 /// Whether a high-contrast theme is on. The accent colour defers to it (`accent::refresh`).
-#[allow(dead_code)]
 pub fn is_active() -> bool {
     ACTIVE.load(Ordering::Relaxed)
 }

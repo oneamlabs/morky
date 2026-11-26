@@ -144,6 +144,15 @@ pub(super) enum OpenMenu {
     File,
     Edit,
     View,
+    Help,
+}
+
+/// The About dialog: a card over the panes, and the update check it can run.
+pub(super) struct About {
+    /// The last check, or `None` before one has finished.
+    pub check: Option<crate::update::Check>,
+    /// A check is in flight.
+    pub checking: bool,
 }
 
 /// The cached views of one document. Kept beside `Tabs` rather than inside `Document`, which stays
@@ -233,6 +242,12 @@ pub struct Prototype {
     recent: Vec<PathBuf>,
     recent_open: bool,
     recent_focus: FocusHandle,
+    /// The About card, while it is open: the update check it shows and its two focus handles.
+    about: Option<About>,
+    about_focus: FocusHandle,
+    about_check: FocusHandle,
+    /// The update check in flight, so a second one cannot start over it.
+    update_task: Option<Task<()>>,
     /// Crash-recovery snapshots: where they live, any held until the user answers, and what the
     /// last write contained.
     recovery: Recovery,
@@ -323,6 +338,10 @@ impl Prototype {
             recent: store::load_recent(&config_dir).into_iter().filter(|path| path.is_file()).collect(),
             recent_open: false,
             recent_focus: cx.focus_handle(),
+            about: None,
+            about_focus: cx.focus_handle(),
+            about_check: cx.focus_handle(),
+            update_task: None,
             recovery: Recovery::new(recovery_dir),
             request_watcher: None,
             _instance_lock: instance_lock,
@@ -387,16 +406,18 @@ impl Prototype {
     fn editor_area(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let Some(source) = &self.source else { return div().into_any_element() };
         let source = source.clone();
-        let wrapper = div().flex().flex_grow(self.split).flex_basis(px(0.)).min_w(px(0.)).h_full().child(source);
+        let grow = if self.settings.preview_visible() { self.split } else { 1.0 };
+        let wrapper = div().flex().flex_grow(grow).flex_basis(px(0.)).min_w(px(0.)).h_full().child(source);
         self.editor_actions(wrapper, cx).into_any_element()
     }
 
     /// The active document's preview, filling the flex row. Cached until the pane is notified.
     fn preview_area(&mut self, _cx: &mut Context<Self>) -> AnyElement {
-        let Some(views) = self.active_views() else { return div().flex_grow(1.0 - self.split).into_any_element() };
+        let grow = if self.settings.show_editor { 1.0 - self.split } else { 1.0 };
+        let Some(views) = self.active_views() else { return div().flex_grow(grow).into_any_element() };
         let preview = views.preview.clone();
         div()
-            .flex_grow(1.0 - self.split)
+            .flex_grow(grow)
             .flex_basis(px(0.))
             .min_w(px(0.))
             .h_full()
@@ -509,6 +530,9 @@ impl Prototype {
         cx.notify();
         if self.open_menu.is_some() {
             self.close_menus(window, cx);
+            return;
+        }
+        if self.close_about(window, cx) {
             return;
         }
         if self.close_recent(window, cx) {
@@ -713,7 +737,9 @@ impl Render for Prototype {
             .child(panes)
             .child(self.status_bar(cx))
             // Last child, so it paints after the panes.
-            .child(self.frame_timer());
+            .child(self.frame_timer())
+            // And the About card over everything, while it is open.
+            .child(self.about_dialog(cx));
         self.command_actions(root, cx)
     }
 }

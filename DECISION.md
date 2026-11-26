@@ -2,6 +2,43 @@
 
 Decisions about Marky that are not obvious from the code, with the reasons and the evidence behind them. Newest first. Each entry says what was decided, what else was considered, and what it costs; change one only with new evidence, and add a new entry rather than rewriting an old one.
 
+## 2026-11-26: The update check uses WinHTTP, and only when asked
+
+Context: the About box needed to say whether a newer release exists, which means asking GitHub. The program carries no HTTP client — adding `reqwest` or `ureq` would pull a TLS stack (rustls or OpenSSL) into a program whose whole reason to exist is being small, against a 24 MB hard budget.
+
+### Decision
+
+- **WinHTTP, through `windows-sys`.** `update.rs` opens a session, sends one `GET` to `api.github.com/repos/vikasdfghjl/marky/releases/latest`, and reads `tag_name`. WinHTTP is in Windows, resolves through the user's proxy settings, uses the system certificate store, and costs no dependency — only the `Win32_Networking_WinHttp` feature on the `windows-sys` crate already in the tree.
+- **The check runs only on request.** **Help > About Marky** shows the box; **Check for updates** sends the request. Nothing is sent at startup, and nothing about the document or the machine leaves the app.
+- **The request runs on the background executor**, never the frame, so a slow network cannot stall the window. Timeouts are set (5 s connect, 10 s receive), and the answer is capped at 1 MiB.
+- **Versions compare by number, not text.** `is_newer` splits on `.`, ignores a leading `v` and any `-prerelease`/`+build` suffix, and compares component by component, so `0.10.0` beats `0.9.0` where a string compare would not.
+- **About is a card over the panes, not a platform dialog.** A native `window.prompt` cannot hold a button; a card can display the result and offer Download. It is dismissible with Esc, Close or a click outside.
+- **A primary button's label follows the accent.** `accent::on_accent` returns black or white by whichever clears more contrast, because the accent is the user's arbitrary colour; `Color::Base` on `Color::Accent` fell to about 3.3:1 on the default blue in the dark theme.
+
+### Options considered
+
+| Question | Chosen | Rejected, and why |
+| --- | --- | --- |
+| HTTP client | WinHTTP via `windows-sys` | **`reqwest`**: pulls hyper, tokio and a TLS stack into a program with a 24 MB budget. **`ureq`**: smaller, but still adds rustls and root-certs to a Windows-only app that already has a system HTTP stack. **No check**: the user asked for it. |
+| When to check | Only when the user asks | **On startup**: a private request at every launch, and a network stall in the path to the first frame. **Daily in the background**: needs persistence, a scheduler and a way to surface the answer unasked. |
+| Where the result shows | The About card | **A native prompt**: cannot hold the Download button, and closes before the answer arrives. **The status bar**: too small for the version, the comparison and a download. |
+| Where About lives | The new Help menu | **The File menu**: works, but Windows apps put About under Help, and the File menu was already the longest. |
+| Version comparison | Numeric, suffix-tolerant | **String compare**: `0.10.0` would sort below `0.9.0`. **A semver crate**: a dependency for one function. |
+
+### Evidence
+
+- `cargo clippy --workspace --all-targets -- -D warnings` clean; `cargo test --workspace` 150 passed, 2 ignored.
+- The ignored `update::tests::talks_to_github` was run against the live API and returned `v0.4.8`.
+- `scripts/e2e.ps1`: 50 PASS, 4 documented SKIP. The five new checks cover Help > About Marky opening, the version line, the Check for updates button, the check showing an answer, and Esc closing it.
+- Driven by hand through UI Automation: the Help menu and its three items appear, Alt+H opens it, and the card read "Marky is up to date (latest is 0.4.8)".
+- `on_accent` is tested over six accents, and never picks the less readable of black and white.
+
+### Consequences
+
+- The version check depends on GitHub's `releases/latest`, which skips drafts and prereleases; a prerelease build compares against the newest stable, which is the intended reading.
+- If the owner or repository name changes, `update::HOST`/`PATH` and `RELEASES_URL` are the one place to edit.
+- The check is unauthenticated: GitHub allows 60 requests an hour per IP, far more than a person clicking the button will use.
+
 ## 2026-11-26: The window adopts the Windows 11 look
 
 Context: the platform integration was already native (OS caption, DWM dark mode, Segoe UI, IME, AccessKit, single instance, embedded icon) but the paint was Tailwind's `zinc` ladder plus `blue-600`, with no corner radii, no shadows and a hardcoded accent. It read as a themed Win32 app, not a Windows 11 one. The role refactor above made the restyle possible without touching 73 call sites.
