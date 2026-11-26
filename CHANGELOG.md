@@ -4,6 +4,8 @@ Notable changes to Marky, newest first. The format follows [Keep a Changelog](ht
 
 ## [Unreleased]
 
+## [0.4.8] - 2026-11-26
+
 ### Changed
 
 - The window now uses the Windows 11 (WinUI 3) look: the Fluent surface, stroke and text colours in both themes, 4 px corners on controls and 8 px on menus and tooltips, soft shadows under overlays, and the Windows 11 type scale.
