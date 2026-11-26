@@ -247,6 +247,9 @@ pub const CHROME_TEXT: f32 = 14.;
 /// Fluent's caption size: the status bar and tooltips.
 pub const CAPTION_TEXT: f32 = 12.;
 
+/// Fluent's subtitle size: a dialog's title.
+pub const TITLE_TEXT: f32 = 20.;
+
 /// The colour for a role in the current theme, after the system's high-contrast palette has had
 /// its say.
 ///

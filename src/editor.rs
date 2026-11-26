@@ -144,6 +144,15 @@ pub(super) enum OpenMenu {
     File,
     Edit,
     View,
+    Help,
+}
+
+/// The About dialog: a card over the panes, and the update check it can run.
+pub(super) struct About {
+    /// The last check, or `None` before one has finished.
+    pub check: Option<crate::update::Check>,
+    /// A check is in flight.
+    pub checking: bool,
 }
 
 /// The cached views of one document. Kept beside `Tabs` rather than inside `Document`, which stays
@@ -233,6 +242,12 @@ pub struct Prototype {
     recent: Vec<PathBuf>,
     recent_open: bool,
     recent_focus: FocusHandle,
+    /// The About card, while it is open: the update check it shows and its two focus handles.
+    about: Option<About>,
+    about_focus: FocusHandle,
+    about_check: FocusHandle,
+    /// The update check in flight, so a second one cannot start over it.
+    update_task: Option<Task<()>>,
     /// Crash-recovery snapshots: where they live, any held until the user answers, and what the
     /// last write contained.
     recovery: Recovery,
@@ -323,6 +338,10 @@ impl Prototype {
             recent: store::load_recent(&config_dir).into_iter().filter(|path| path.is_file()).collect(),
             recent_open: false,
             recent_focus: cx.focus_handle(),
+            about: None,
+            about_focus: cx.focus_handle(),
+            about_check: cx.focus_handle(),
+            update_task: None,
             recovery: Recovery::new(recovery_dir),
             request_watcher: None,
             _instance_lock: instance_lock,
@@ -511,6 +530,9 @@ impl Prototype {
         cx.notify();
         if self.open_menu.is_some() {
             self.close_menus(window, cx);
+            return;
+        }
+        if self.close_about(window, cx) {
             return;
         }
         if self.close_recent(window, cx) {
@@ -715,7 +737,9 @@ impl Render for Prototype {
             .child(panes)
             .child(self.status_bar(cx))
             // Last child, so it paints after the panes.
-            .child(self.frame_timer());
+            .child(self.frame_timer())
+            // And the About card over everything, while it is open.
+            .child(self.about_dialog(cx));
         self.command_actions(root, cx)
     }
 }

@@ -4,6 +4,10 @@ Notable changes to Marky, newest first. The format follows [Keep a Changelog](ht
 
 ## [Unreleased]
 
+### Added
+
+- A **Help** menu, as in other Windows apps. **Help > About Marky** shows the version, licence and log location, with a **Check for updates** button that asks GitHub for the latest release and says whether a newer version exists, with a Download button when one does. **Help > Marky on GitHub** opens the releases page.
+
 ### Fixed
 
 - Editor only and Preview only now fill the whole window instead of leaving half of it empty at the previous split.

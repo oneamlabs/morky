@@ -26,6 +26,7 @@ mod settings;
 mod syntax;
 mod text_field;
 pub(crate) mod theme;
+mod update;
 
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -231,6 +232,7 @@ fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("f10", editor::OpenFileMenu, None),
         KeyBinding::new("alt-e", editor::OpenEditMenu, None),
         KeyBinding::new("alt-v", editor::OpenViewMenu, None),
+        KeyBinding::new("alt-h", editor::OpenHelpMenu, None),
         // An open menu.
         KeyBinding::new("down", editor::MenuNext, Some("Menu")),
         KeyBinding::new("up", editor::MenuPrevious, Some("Menu")),
@@ -242,6 +244,7 @@ fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("c", editor::MenuAccessKey('c'), Some("Menu")),
         KeyBinding::new("e", editor::MenuAccessKey('e'), Some("Menu")),
         KeyBinding::new("f", editor::MenuAccessKey('f'), Some("Menu")),
+        KeyBinding::new("g", editor::MenuAccessKey('g'), Some("Menu")),
         KeyBinding::new("l", editor::MenuAccessKey('l'), Some("Menu")),
         KeyBinding::new("m", editor::MenuAccessKey('m'), Some("Menu")),
         KeyBinding::new("n", editor::MenuAccessKey('n'), Some("Menu")),
